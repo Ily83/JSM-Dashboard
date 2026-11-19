@@ -21,12 +21,13 @@ const ALERTS_KEY = ['alerts'] as const;
  *    (the table rows in particular) do not re-render.
  *  - Polling pauses while the browser tab is hidden.
  */
-export function useAlerts(refreshSeconds: number) {
+export function useAlerts(refreshSeconds: number, enabled = true) {
   const queryClient = useQueryClient();
   const forceNext = useRef(false);
 
   const query = useQuery<AlertsData>({
     queryKey: ALERTS_KEY,
+    enabled,
     queryFn: async ({ signal }) => {
       const previous = queryClient.getQueryData<AlertsData>(ALERTS_KEY);
       const force = forceNext.current;

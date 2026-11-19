@@ -1,9 +1,10 @@
-import type { AlertDetail, ExtractionRules } from '../../shared/types';
+import { HISTORY_MAX_OFFSET, HISTORY_PAGE_SIZE } from '../../shared/history';
+import type { AlertDetail, ExtractionRules, HistoryResponse } from '../../shared/types';
 import type { JiraConfig } from '../config';
 import { log } from '../logger';
-import type { AlertSource, SourceSnapshot } from '../services/source';
+import type { AlertSource, HistoryPage, SourceSnapshot } from '../services/source';
 import { JiraApiError, JiraClient, MAX_OFFSET_PLUS_SIZE, MAX_PAGE_SIZE } from './client';
-import { mapAlert, type MapContext } from './mapper';
+import { mapAlert, toListItem, type MapContext } from './mapper';
 import type { RawAlert } from './schemas';
 
 /**
@@ -92,6 +93,23 @@ export class JiraSource implements AlertSource {
       if (error instanceof JiraApiError && error.kind === 'not_found') return null;
       throw error;
     }
+  }
+
+  async loadHistory({ from, until, offset }: HistoryPage): Promise<HistoryResponse> {
+    const page = await this.client.listAlerts({
+      query: this.query(`createdAt >= ${from} AND createdAt < ${until}`),
+      offset,
+      size: HISTORY_PAGE_SIZE,
+    });
+    const total = page.total ?? 0;
+    const more = page.hasNext || total > offset + HISTORY_PAGE_SIZE;
+    const atLimit = offset >= HISTORY_MAX_OFFSET;
+    return {
+      alerts: page.alerts.map((raw) => toListItem(mapAlert(raw, this.ctx, false))),
+      hasNext: more && !atLimit,
+      truncated: total > HISTORY_MAX_OFFSET + HISTORY_PAGE_SIZE || (more && atLimit),
+      skipped: page.skipped,
+    };
   }
 
   private async fullSync(previous: SourceSnapshot | null, now: number): Promise<SourceSnapshot> {

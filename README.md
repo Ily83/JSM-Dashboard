@@ -6,6 +6,7 @@ It runs on your own computer, shows which customers each alert affects at a glan
 Without Jira credentials it starts in **demo mode** with 30 realistic sample alerts, so everything can be tried immediately.
 
 What each release contains, and how to install or update it: [RELEASE_NOTES.md](RELEASE_NOTES.md).
+Proposed features: [BACKLOG.md](BACKLOG.md).
 
 ## Quick start
 
@@ -109,11 +110,21 @@ All filters run in the browser on the loaded alerts, so they are instant, work t
 
 Rules: different filters combine with AND. Within a filter, selected values combine with OR ("Any"), or with AND ("All") for customers, tags and teams. Any value can be excluded instead of included. Each active filter shows its value on its button with its own clear button.
 
+Under **More**, use **Summary**, **Service contains**, or **Assignee contains** to match a case-insensitive word or phrase in that field only. These can be combined with the existing exact-value and status filters.
+
+## Alert history
+
+Open **Alert history** in the sidebar, choose creation dates up to 12 months back (UTC), and select **Load history**. Use **Older dates** and **Newer dates** to move between windows of up to 31 days, and **Next page** to browse the current window. History is read-only, includes closed alerts, and only shows alerts Jira still retains and the configured account can read. The `JIRA_ALERT_QUERY` restriction still applies. If a date window hits Jira's pagination limit, select a shorter range.
+
+Choose **Analyze by month** to see a histogram of alerts created in each calendar month. Filter the chart by customer, tag, or both, and select a bar to see its matching alerts. Filters use the same derived customers and tags as the alert list. The chart counts up to 500 records per month; a `+` marks a lower bound, including when records could not be read. Use **Load history** for paged browsing beyond that cap.
+
+History does not change the live dashboard's limits or poll Jira in the background.
+
 ## Customising
 
 Everything is stored per browser and survives a reload.
 
-- **Dashboard.** The grid icon in the top bar enters edit mode: drag widgets, resize them from the corner, hide them, add others. Settings offers the same with the keyboard.
+- **Dashboard.** The grid icon in the top bar enters edit mode: drag widgets, resize them from the corner, hide them, add others. Settings offers the same with the keyboard. The optional "Alerts by tag" widget ranks active alerts by tag; selecting a tag filters the table.
 - **Table.** Drag a header to move a column, drag its edge to resize, double-click the edge to reset; arrow keys work on a focused edge. Click a header to sort, Shift+click for a second level.
 - **Saved views.** A view stores section, quick filter, filters, search and sorting, and optionally columns, dashboard and density. Views can be renamed, duplicated, reordered, deleted and set as default in Settings.
 - **Density.** Compact, comfortable or spacious.

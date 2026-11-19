@@ -1,4 +1,4 @@
-import type { AlertDetail, AlertsResponse, StatusResponse } from '../../shared/types';
+import type { AlertDetail, AlertsResponse, HistoryResponse, StatusResponse } from '../../shared/types';
 
 /**
  * The frontend talks only to the local backend (/api). It never calls Jira
@@ -56,4 +56,9 @@ export function fetchAlerts(
 
 export function fetchAlertDetail(id: string, signal?: AbortSignal): Promise<AlertDetail> {
   return getJson(`/api/alerts/${encodeURIComponent(id)}`, signal);
+}
+
+export function fetchHistory(window: { from: string; to: string }, offset: number, signal?: AbortSignal): Promise<HistoryResponse> {
+  const params = new URLSearchParams({ ...window, offset: String(offset) });
+  return getJson(`/api/history?${params}`, signal);
 }

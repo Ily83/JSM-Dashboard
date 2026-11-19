@@ -119,7 +119,7 @@ export const SET_FIELDS = [
     id: 'tag',
     kind: 'set',
     label: 'Tag',
-    pinnedByDefault: false,
+    pinnedByDefault: true,
     multi: true,
     noneLabel: 'No tags',
     get: (a) => a.tags,
@@ -179,13 +179,16 @@ export const DATE_FIELDS = [
 ] as const satisfies readonly DateField[];
 
 export const TEXT_FIELDS = [
+  { id: 'summary', kind: 'text', label: 'Summary', pinnedByDefault: false, placeholder: 'Summary contains…', get: (a) => a.summary },
+  { id: 'serviceText', kind: 'text', label: 'Service contains', pinnedByDefault: false, placeholder: 'Service contains…', get: (a) => a.service ?? '' },
+  { id: 'assigneeText', kind: 'text', label: 'Assignee contains', pinnedByDefault: false, placeholder: 'Assignee contains…', get: (a) => a.assignee ?? '' },
   {
     id: 'identifier',
     kind: 'text',
     label: 'Alert ID',
     pinnedByDefault: false,
     placeholder: 'Tiny ID, alert ID or alias',
-    get: (a) => `${a.tinyId ?? ''}\n#${a.tinyId ?? ''}\n${a.id}\n${a.alias ?? ''}`.toLowerCase(),
+    get: (a) => `${a.tinyId ?? ''}\n#${a.tinyId ?? ''}\n${a.id}\n${a.alias ?? ''}`,
     description: 'Matches the short number, the full alert id or the alias.',
   },
 ] as const satisfies readonly TextField[];
@@ -210,6 +213,9 @@ const ORDER: FilterFieldId[] = [
   'integration',
   'updated',
   'identifier',
+  'summary',
+  'serviceText',
+  'assigneeText',
 ];
 
 export const FIELD_BY_ID = Object.fromEntries(

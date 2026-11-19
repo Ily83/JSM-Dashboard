@@ -230,6 +230,11 @@ export const WIDGET_COMPONENTS: Record<WidgetId, ComponentType<WidgetProps>> = {
       <RankedList items={stats.customers} height={height} asBadge onPick={(name) => actions.filterBy('customer', name)} />
     </Panel>
   ),
+  topTags: ({ stats, height, actions }) => (
+    <Panel title="Alerts by tag">
+      <RankedList items={stats.tags} height={height} onPick={(name) => actions.filterBy('tag', name)} />
+    </Panel>
+  ),
   priorityBreakdown: PriorityBreakdown,
   topServices: ({ stats, height, actions }) => (
     <Panel title="Alerts by service">

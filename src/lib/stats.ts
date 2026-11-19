@@ -21,6 +21,7 @@ export interface DashboardStats {
   unassignedUrgent: number;
   byPriority: Record<Priority, number>;
   customers: Ranked[];
+  tags: Ranked[];
   services: Ranked[];
   sources: Ranked[];
   /** Open, unacknowledged P1/P2 alerts, oldest first. */
@@ -44,6 +45,7 @@ function bump(map: Map<string, Ranked>, name: string, critical: boolean): void {
 export function computeStats(alerts: readonly Alert[]): DashboardStats {
   const byPriority = Object.fromEntries(PRIORITIES.map((p) => [p, 0])) as Record<Priority, number>;
   const customers = new Map<string, Ranked>();
+  const tags = new Map<string, Ranked>();
   const services = new Map<string, Ranked>();
   const sources = new Map<string, Ranked>();
   const attention: Alert[] = [];
@@ -71,6 +73,7 @@ export function computeStats(alerts: readonly Alert[]): DashboardStats {
     }
     if ((p1 || p2) && waiting) attention.push(alert);
     for (const customer of alert.customers) bump(customers, customer, p1);
+    for (const tag of new Set(alert.tags)) bump(tags, tag, p1);
     if (alert.service) bump(services, alert.service, p1);
     bump(sources, alert.source, p1);
   }
@@ -80,6 +83,7 @@ export function computeStats(alerts: readonly Alert[]): DashboardStats {
     ...stats,
     byPriority,
     customers: rank(customers),
+    tags: rank(tags),
     services: rank(services),
     sources: rank(sources),
     attention: attention.slice(0, 25),

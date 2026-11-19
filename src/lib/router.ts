@@ -7,14 +7,14 @@ import { isSectionId, type SectionId } from '../config/sections';
  * server-side routing is needed.
  */
 export interface Route {
-  page: 'alerts' | 'settings';
+  page: 'alerts' | 'settings' | 'history';
   section: SectionId;
   alertId: string | null;
 }
 
 function parse(hash: string): Route {
   const [path = '', query = ''] = hash.replace(/^#\/?/, '').split('?');
-  if (path === 'settings') return { page: 'settings', section: 'all', alertId: null };
+  if (path === 'settings' || path === 'history') return { page: path, section: 'all', alertId: null };
   const alertId = new URLSearchParams(query).get('alert');
   return {
     page: 'alerts',
@@ -46,9 +46,9 @@ export function useRoute(): Route {
 export function navigate(next: Partial<Route>, options: { replace?: boolean } = {}): void {
   const route = { ...snapshot(), ...next };
   const hash =
-    route.page === 'settings'
-      ? '#/settings'
-      : `#/${route.section}${route.alertId ? `?alert=${encodeURIComponent(route.alertId)}` : ''}`;
+    route.page === 'alerts'
+      ? `#/${route.section}${route.alertId ? `?alert=${encodeURIComponent(route.alertId)}` : ''}`
+      : `#/${route.page}`;
   if (hash === window.location.hash) return;
   if (options.replace) {
     window.history.replaceState(null, '', hash);

@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import compression from 'compression';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
+import { DAY_MS, HISTORY_MAX_OFFSET, HISTORY_PAGE_SIZE, HISTORY_WINDOW_DAYS, historyDateLimits, parseUtcDate } from '../shared/history';
 import type { ApiError, StatusResponse } from '../shared/types';
 import type { AppConfig } from './config';
 import { JiraApiError } from './jira/client';
@@ -19,6 +20,7 @@ const VERSION = /^[a-f0-9]{1,64}$/;
  *   GET /api/status        mode, limits, extraction rules, sync state
  *   GET /api/alerts        alert list (?known=<version> &refresh=1)
  *   GET /api/alerts/:id    one alert with description and extra properties
+ *   GET /api/history      one page of alerts within a UTC date window
  */
 export function createApp(config: AppConfig, store: AlertStore) {
   const app = express();
@@ -99,6 +101,28 @@ export function createApp(config: AppConfig, store: AlertStore) {
       return;
     }
     res.json(detail);
+  });
+
+  api.get('/history', async (req, res) => {
+    const from = parseUtcDate(req.query.from);
+    const to = parseUtcDate(req.query.to);
+    const { earliest, today } = historyDateLimits(Date.now());
+    if (from === null || to === null || from > to || from < parseUtcDate(earliest)! || to > parseUtcDate(today)!) {
+      res.status(400).json({ error: 'Choose valid dates within the past 12 months (UTC).' } satisfies ApiError);
+      return;
+    }
+    const until = to + DAY_MS;
+    if (until - from > HISTORY_WINDOW_DAYS * DAY_MS) {
+      res.status(400).json({ error: `Each history window can contain at most ${HISTORY_WINDOW_DAYS} days.` } satisfies ApiError);
+      return;
+    }
+    const rawOffset = req.query.offset ?? '0';
+    const offset = typeof rawOffset === 'string' && /^\d+$/.test(rawOffset) ? Number(rawOffset) : NaN;
+    if (offset > HISTORY_MAX_OFFSET || offset % HISTORY_PAGE_SIZE !== 0) {
+      res.status(400).json({ error: 'Invalid history page.' } satisfies ApiError);
+      return;
+    }
+    res.json(await store.getHistory({ from, until, offset }));
   });
 
   api.use((_req, res) => {

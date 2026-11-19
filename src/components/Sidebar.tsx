@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Activity, Bookmark, CheckCheck, CircleCheck, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Settings, Siren, Star, type LucideIcon } from 'lucide-react';
+import { Activity, Bookmark, CalendarDays, CheckCheck, CircleCheck, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Settings, Siren, Star, type LucideIcon } from 'lucide-react';
 import { SECTIONS, SECTION_IDS, type SectionId } from '../config/sections';
 import { cn } from '../lib/cn';
 import type { Route } from '../lib/router';
@@ -76,6 +76,19 @@ export const Sidebar = memo(function Sidebar({ route, counts, collapsed, onToggl
               </li>
             );
           })}
+          <li>
+            <a
+              href="#/history"
+              aria-current={route.page === 'history' ? 'page' : undefined}
+              aria-label="Alert history"
+              className={item(route.page === 'history', collapsed)}
+              data-tip={collapsed ? 'Alert history' : undefined}
+              data-tip-always=""
+            >
+              <CalendarDays size={16} aria-hidden className="flex-none" />
+              {!collapsed && 'Alert history'}
+            </a>
+          </li>
         </ul>
 
         {views.length > 0 && (

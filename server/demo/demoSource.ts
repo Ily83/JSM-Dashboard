@@ -1,7 +1,8 @@
-import type { AlertDetail, ExtractionRules } from '../../shared/types';
-import { mapAlert, type MapContext } from '../jira/mapper';
+import { HISTORY_MAX_OFFSET, HISTORY_PAGE_SIZE } from '../../shared/history';
+import type { AlertDetail, ExtractionRules, HistoryResponse } from '../../shared/types';
+import { mapAlert, toListItem, type MapContext } from '../jira/mapper';
 import { RawAlertSchema } from '../jira/schemas';
-import type { AlertSource, SourceSnapshot } from '../services/source';
+import type { AlertSource, HistoryPage, SourceSnapshot } from '../services/source';
 import { buildDemoAlerts, DEMO_TEAMS } from './demoData';
 
 /**
@@ -30,6 +31,20 @@ export class DemoSource implements AlertSource {
 
   async sync(): Promise<SourceSnapshot> {
     return this.snapshot;
+  }
+
+  async loadHistory({ from, until, offset }: HistoryPage): Promise<HistoryResponse> {
+    const matches = [...this.snapshot.alerts.values()]
+      .filter((alert) => alert.createdAt >= from && alert.createdAt < until)
+      .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+    const more = offset + HISTORY_PAGE_SIZE < matches.length;
+    const atLimit = offset >= HISTORY_MAX_OFFSET;
+    return {
+      alerts: matches.slice(offset, offset + HISTORY_PAGE_SIZE).map(toListItem),
+      hasNext: more && !atLimit,
+      truncated: matches.length > HISTORY_MAX_OFFSET + HISTORY_PAGE_SIZE,
+      skipped: this.snapshot.skipped,
+    };
   }
 
   async loadDetail(id: string): Promise<AlertDetail | null> {

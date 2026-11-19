@@ -4,6 +4,7 @@ import { JiraApiError, JiraClient } from '../server/jira/client';
 import { JiraSource } from '../server/jira/source';
 import { redact } from '../server/logger';
 import { AlertStore } from '../server/services/alertStore';
+import { DAY_MS, HISTORY_MAX_OFFSET, HISTORY_PAGE_SIZE } from '../shared/history';
 import type { ExtractionRules } from '../shared/types';
 
 /** A stand-in for the Jira Operations API, following the documented request and response shapes. */
@@ -19,7 +20,7 @@ interface FakeAlert {
   acknowledged?: boolean;
 }
 
-function fakeJira(options: { alerts: FakeAlert[]; listOmitsExtraProperties?: boolean }) {
+function fakeJira(options: { alerts: FakeAlert[]; listOmitsExtraProperties?: boolean; listCount?: number }) {
   const calls: Array<{ method: string; path: string; query: URLSearchParams; authorization: string | null }> = [];
   let failWith: (() => Response) | null = null;
 
@@ -42,10 +43,13 @@ function fakeJira(options: { alerts: FakeAlert[]; listOmitsExtraProperties?: boo
     if (url.pathname.endsWith('/v1/alerts')) {
       const query = url.searchParams.get('query') ?? '';
       const wantOpen = !query.includes('NOT status: open');
+      const history = query.match(/createdAt >= (\d+) AND createdAt < (\d+)/);
       const offset = Number(url.searchParams.get('offset') ?? 0);
       const size = Number(url.searchParams.get('size') ?? 20);
       const matching = options.alerts
-        .filter((a) => (a.status === 'open') === wantOpen)
+        .filter((a) => history
+          ? Date.parse(a.createdAt) >= Number(history[1]) && Date.parse(a.createdAt) < Number(history[2])
+          : (a.status === 'open') === wantOpen)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       const values = matching.slice(offset, offset + size).map((a) => {
         if (!options.listOmitsExtraProperties) return a;
@@ -53,7 +57,7 @@ function fakeJira(options: { alerts: FakeAlert[]; listOmitsExtraProperties?: boo
         return rest;
       });
       const hasNext = offset + size < matching.length;
-      return json({ values, count: matching.length, links: hasNext ? { next: `/v1/alerts?offset=${offset + size}&size=${size}` } : {} });
+      return json({ values, count: options.listCount ?? matching.length, links: hasNext ? { next: `/v1/alerts?offset=${offset + size}&size=${size}` } : {} });
     }
     return json({ errors: [{ title: 'Unknown' }] }, 404);
   }) as typeof fetch;
@@ -131,6 +135,49 @@ describe('Jira integration (against a fake API)', () => {
     const snapshot = await new JiraSource(limited, rules, new JiraClient(limited, 4, jira.fetchImpl)).sync(null);
     expect(snapshot.alerts.size).toBe(120);
     expect(snapshot.truncated).toBe(true);
+  });
+
+  it('reads older open and closed alerts by creation date without starting live sync or loading details', async () => {
+    const from = Date.UTC(2025, 1, 1);
+    const until = from + 7 * DAY_MS;
+    const within = [...makeAlerts(100), ...makeAlerts(2, 'closed')].map((alert, i) => ({
+      ...alert,
+      createdAt: new Date(from + i).toISOString(),
+    }));
+    const outside = [from - 1, until].map((date, i) => ({
+      ...within[0]!,
+      id: `outside-${i}`,
+      createdAt: new Date(date).toISOString(),
+    }));
+    const jira = fakeJira({ alerts: [...within, ...outside] });
+    const scoped = { ...config, alertQuery: 'tag: prod', maxOpenAlerts: 1, maxClosedAlerts: 0 };
+    const store = new AlertStore(new JiraSource(scoped, rules, new JiraClient(scoped, 4, jira.fetchImpl)), 30_000);
+
+    const first = await store.getHistory({ from, until, offset: 0 });
+    const second = await store.getHistory({ from, until, offset: HISTORY_PAGE_SIZE });
+    expect(first.hasNext).toBe(true);
+    expect(second.hasNext).toBe(false);
+    expect([...first.alerts, ...second.alerts].map((a) => a.id)).toEqual(within.map((a) => a.id).reverse());
+    expect(first.alerts[0]?.status).toBe('closed');
+    expect(jira.calls.map(({ method, path }) => [method, path])).toEqual([
+      ['GET', '/_edge/tenant_info'],
+      ['GET', '/jsm/ops/api/cloud-123/v1/alerts'],
+      ['GET', '/jsm/ops/api/cloud-123/v1/alerts'],
+    ]);
+    expect(jira.calls[2]?.query.get('query')).toBe(`(tag: prod) AND createdAt >= ${from} AND createdAt < ${until}`);
+    expect(jira.calls[2]?.query.get('offset')).toBe(String(HISTORY_PAGE_SIZE));
+    expect(store.meta().lastSyncAt).toBeNull();
+  });
+
+  it('warns about dense windows and stops paging below the Jira limit', async () => {
+    const jira = fakeJira({ alerts: [], listCount: 20_001 });
+    const source = new JiraSource(config, rules, new JiraClient(config, 4, jira.fetchImpl));
+    const from = Date.UTC(2025, 1, 1);
+    const until = from + DAY_MS;
+    expect(await source.loadHistory({ from, until, offset: 0 })).toMatchObject({ hasNext: true, truncated: true });
+    expect(await source.loadHistory({ from, until, offset: HISTORY_MAX_OFFSET })).toMatchObject({ hasNext: false, truncated: true });
+    const params = jira.calls.at(-1)!.query;
+    expect(Number(params.get('offset')) + Number(params.get('size'))).toBeLessThan(20_000);
   });
 
   it('light sync: asks only for open alerts and looks up the ones that disappeared', async () => {

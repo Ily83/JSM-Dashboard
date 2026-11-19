@@ -17,6 +17,7 @@ interface TopBarProps {
   onRefresh: () => void;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
+  showLiveControls?: boolean;
   /** Dashboard controls, absent on the settings page. */
   dashboard?: { collapsed: boolean; editing: boolean; onToggleCollapsed: () => void; onToggleEditing: () => void };
 }
@@ -90,26 +91,30 @@ export function TopBar(props: TopBarProps) {
       )}
 
       <div className="ml-auto flex flex-none items-center gap-1.5">
-        <SyncStatus meta={props.meta} isFetching={isFetching} requestError={props.requestError} />
-        <label className="flex items-center">
-          <span className="sr-only">Auto-refresh interval</span>
-          <select
-            value={refreshSeconds}
-            onChange={(event) => onRefreshSecondsChange(Number(event.target.value))}
-            className="h-7 rounded-md border border-line-strong bg-panel px-1.5 text-xs text-fg"
-            data-tip="Auto-refresh"
-            data-tip-always=""
-          >
-            {options.map((seconds) => (
-              <option key={seconds} value={seconds}>
-                {label(seconds)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="button" onClick={onRefresh} disabled={isFetching} aria-label="Refresh now" data-tip="Refresh now" data-tip-always="" className={iconButton()}>
-          <RefreshCw size={15} aria-hidden className={cn(isFetching && 'spin')} />
-        </button>
+        {props.showLiveControls !== false && (
+          <>
+            <SyncStatus meta={props.meta} isFetching={isFetching} requestError={props.requestError} />
+            <label className="flex items-center">
+              <span className="sr-only">Auto-refresh interval</span>
+              <select
+                value={refreshSeconds}
+                onChange={(event) => onRefreshSecondsChange(Number(event.target.value))}
+                className="h-7 rounded-md border border-line-strong bg-panel px-1.5 text-xs text-fg"
+                data-tip="Auto-refresh"
+                data-tip-always=""
+              >
+                {options.map((seconds) => (
+                  <option key={seconds} value={seconds}>
+                    {label(seconds)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={onRefresh} disabled={isFetching} aria-label="Refresh now" data-tip="Refresh now" data-tip-always="" className={iconButton()}>
+              <RefreshCw size={15} aria-hidden className={cn(isFetching && 'spin')} />
+            </button>
+          </>
+        )}
 
         {dashboard && (
           <>

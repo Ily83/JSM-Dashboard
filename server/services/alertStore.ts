@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { Alert, AlertDetail, AlertsResponse, SyncMeta } from '../../shared/types';
+import type { Alert, AlertDetail, AlertsResponse, HistoryResponse, SyncMeta } from '../../shared/types';
 import { JiraApiError } from '../jira/client';
 import { toListItem } from '../jira/mapper';
 import { log } from '../logger';
-import type { AlertSource, SourceSnapshot } from './source';
+import type { AlertSource, HistoryPage, SourceSnapshot } from './source';
 
 /**
  * In-memory cache in front of the alert source.
@@ -72,6 +72,10 @@ export class AlertStore {
     await this.ensureFresh(options.force ?? false);
     const unchanged = options.knownVersion !== undefined && options.knownVersion === this.version;
     return { version: this.version, unchanged, alerts: unchanged ? [] : this.list, meta: this.meta() };
+  }
+
+  async getHistory(page: HistoryPage): Promise<HistoryResponse> {
+    return this.source.loadHistory(page);
   }
 
   async getDetail(id: string): Promise<AlertDetail | null> {

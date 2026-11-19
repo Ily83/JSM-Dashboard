@@ -8,6 +8,7 @@ import { Dashboard } from './components/dashboard/Dashboard';
 import type { WidgetActions } from './components/dashboard/widgets';
 import { DetailPanel } from './components/DetailPanel';
 import { FilterBar } from './components/filters/FilterBar';
+import { HistoryView } from './components/HistoryView';
 import { SettingsView } from './components/SettingsView';
 import { Sidebar } from './components/Sidebar';
 import { AlertTable } from './components/table/AlertTable';
@@ -53,7 +54,8 @@ export function App() {
 
   const status = useStatus();
   const refreshSeconds = prefs.refreshSeconds ?? status.data?.defaultRefreshSeconds ?? 60;
-  const alertsQuery = useAlerts(refreshSeconds);
+  const onHistory = route.page === 'history';
+  const alertsQuery = useAlerts(refreshSeconds, !onHistory);
   const alerts = alertsQuery.data?.alerts ?? NO_ALERTS;
   const meta = alertsQuery.data?.meta;
 
@@ -187,7 +189,7 @@ export function App() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
-          title={route.page === 'settings' ? 'Settings' : (views.saved.find((v) => v.id === views.activeViewId)?.name ?? section.label)}
+          title={route.page === 'settings' ? 'Settings' : onHistory ? 'Alert history' : (views.saved.find((v) => v.id === views.activeViewId)?.name ?? section.label)}
           demo={(meta?.mode ?? status.data?.mode) === 'demo'}
           meta={meta}
           isFetching={alertsQuery.isFetching}
@@ -197,6 +199,7 @@ export function App() {
           onRefresh={alertsQuery.refresh}
           theme={prefs.theme}
           onThemeChange={(theme) => patchPrefs({ theme })}
+          showLiveControls={!onHistory}
           dashboard={
             route.page === 'alerts'
               ? {
@@ -209,7 +212,7 @@ export function App() {
           }
         />
 
-        {staleNotice && (
+        {!onHistory && staleNotice && (
           <div role="alert" className="flex flex-none items-center gap-2 border-b border-crit/40 bg-crit-soft px-3 py-1.5 text-xs">
             <TriangleAlert size={14} aria-hidden className="flex-none text-crit" />
             <span className="min-w-0 flex-1">{staleNotice}</span>
@@ -218,9 +221,10 @@ export function App() {
             </button>
           </div>
         )}
-        {meta?.truncated && (
+        {!onHistory && meta?.truncated && (
           <div role="status" className="flex-none border-b border-warn/40 bg-warn-soft px-3 py-1.5 text-xs">
-            Jira holds more open alerts than the configured limit. Showing the newest {status.data?.limits.maxOpenAlerts.toLocaleString() ?? ''}.
+            {status.data ? `Jira holds more open alerts than the configured limit. Showing the newest ${status.data.limits.maxOpenAlerts.toLocaleString()}.` : 'The live list is limited to the newest open alerts.'}{' '}
+            <a href="#/history" className="font-semibold underline">Browse alert history</a>
           </div>
         )}
 
@@ -230,6 +234,8 @@ export function App() {
             assignees={facets.assignee.map((o) => o.value).filter(Boolean)}
             customers={facets.customer.map((o) => o.value).filter(Boolean)}
           />
+        ) : onHistory ? (
+          <HistoryView />
         ) : (
           <div className="relative flex min-h-0 flex-1">
             <main className="flex min-w-0 flex-1 flex-col">

@@ -1,4 +1,11 @@
-import type { AlertDetail, AppMode } from '../../shared/types';
+import type { AlertDetail, AppMode, HistoryResponse } from '../../shared/types';
+
+export interface HistoryPage {
+  from: number;
+  /** Exclusive end timestamp. */
+  until: number;
+  offset: number;
+}
 
 /** The alerts known after one synchronisation. */
 export interface SourceSnapshot {
@@ -17,6 +24,7 @@ export interface AlertSource {
   readonly mode: AppMode;
   /** Returns the current set of alerts. `previous` enables incremental work. */
   sync(previous: SourceSnapshot | null): Promise<SourceSnapshot>;
+  loadHistory(page: HistoryPage): Promise<HistoryResponse>;
   /** Loads description and extra properties for one alert. Null if it no longer exists. */
   loadDetail(id: string): Promise<AlertDetail | null>;
 }

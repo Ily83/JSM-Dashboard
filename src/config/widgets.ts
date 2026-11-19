@@ -33,6 +33,7 @@ export const WIDGETS = [
   { id: 'kpiUnassigned', title: 'Unassigned alerts', description: 'Active alerts without an assignee.', ...kpi, defaultVisible: true },
   { id: 'kpiAcked', title: 'Acknowledged alerts', description: 'Active alerts somebody is working on.', ...kpi, defaultVisible: true },
   { id: 'topCustomers', title: 'Alerts by customer', description: 'Customers ranked by number of active alerts.', ...panel, defaultVisible: false },
+  { id: 'topTags', title: 'Alerts by tag', description: 'Active alerts ranked by tag.', ...panel, defaultVisible: false },
   { id: 'priorityBreakdown', title: 'Alerts by priority', description: 'Active alerts per priority.', ...panel, h: 4, defaultVisible: false },
   { id: 'topServices', title: 'Alerts by service', description: 'Services ranked by number of active alerts.', ...panel, defaultVisible: false },
   { id: 'topSources', title: 'Alerts by source', description: 'Monitoring sources ranked by number of active alerts.', ...panel, defaultVisible: false },

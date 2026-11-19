@@ -214,9 +214,10 @@ export function filterAlerts(alerts: readonly Alert[], query: ViewQuery): Alert[
   for (const field of TEXT_FIELDS) {
     const value = filters.text[field.id];
     if (!isTextActive(value)) continue;
-    const needle = value.trim().toLowerCase().replace(/^#/, '');
+    const text = value.trim().toLowerCase();
+    const needle = field.id === 'identifier' ? text.replace(/^#/, '') : text;
     const get = field.get;
-    predicates.push((alert) => get(alert).includes(needle));
+    predicates.push((alert) => get(alert).toLowerCase().includes(needle));
   }
   const quick = quickFilterById(query.quick);
   if (quick) predicates.push((alert) => quick.test(alert, profile));

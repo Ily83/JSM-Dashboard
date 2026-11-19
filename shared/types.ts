@@ -111,6 +111,14 @@ export interface AlertsResponse {
   meta: SyncMeta;
 }
 
+export interface HistoryResponse {
+  alerts: Alert[];
+  hasNext: boolean;
+  /** The date window has more results than the pagination limit allows. */
+  truncated: boolean;
+  skipped: number;
+}
+
 export interface ExtractionRules {
   customerTagPrefixes: string[];
   customerPropertyKeys: string[];

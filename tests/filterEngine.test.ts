@@ -112,6 +112,20 @@ describe('filterAlerts', () => {
   it('filters by alert identifier', () =>
     expect(run({ filters: { ...EMPTY_FILTERS, text: { identifier: '#3' } } })).toEqual(['a3']));
 
+  it('matches case-insensitive text in the requested column only', () => {
+    expect(run({ filters: { ...EMPTY_FILTERS, text: { summary: '  VPN TUNNEL  ' } } })).toEqual(['a4']);
+    expect(run({ filters: { ...EMPTY_FILTERS, text: { summary: 'Datadog' } } })).toEqual([]);
+    expect(run({ filters: { ...EMPTY_FILTERS, text: { serviceText: 'ks' } } })).toEqual(['a1']);
+    expect(run({ filters: { ...EMPTY_FILTERS, text: { assigneeText: 'YA NA' } } })).toEqual(['a1']);
+    expect(run({ filters: { ...EMPTY_FILTERS, text: { summary: '#vpn' } } })).toEqual([]);
+  });
+
+  it('combines column text filters with existing exact filters', () => {
+    const text = { serviceText: 'AK', assigneeText: 'Priya' };
+    expect(run({ filters: { ...set('status', ['open']), text } })).toEqual(['a1']);
+    expect(run({ filters: { ...set('status', ['closed']), text } })).toEqual([]);
+  });
+
   it('searches several words across fields', () => {
     expect(run({ search: 'vpn litware' })).toEqual(['a4']);
     expect(run({ search: 'zabbix' })).toEqual(['a3']);
@@ -145,12 +159,12 @@ describe('sanitizeFilters', () => {
     const clean = sanitizeFilters({
       set: { customer: { include: ['A', 'A', 3], exclude: 'x', match: 'all' }, bogus: { include: ['x'] }, status: { include: [] } },
       date: { created: { preset: 'nope' }, updated: { preset: '7d' } },
-      text: { identifier: 12 },
+      text: { identifier: 12, summary: 'timeout', serviceText: 'edge', assigneeText: 'Priya' },
     });
     expect(clean).toEqual({
       set: { customer: { include: ['A'], exclude: [], match: 'all' } },
       date: { updated: { preset: '7d', from: '', to: '' } },
-      text: {},
+      text: { summary: 'timeout', serviceText: 'edge', assigneeText: 'Priya' },
     });
     expect(sanitizeFilters(null)).toEqual(EMPTY_FILTERS);
   });
