@@ -13,6 +13,7 @@ import type { AlertDetail, ExtractionRules, HistoryResponse } from '../../shared
 import { JiraApiError } from '../jira/client';
 import { mapAlert, toListItem, type MapContext } from '../jira/mapper';
 import { RawAlertSchema, type RawAlert } from '../jira/schemas';
+import type { CustomerMap } from '../customerMap';
 import type { AlertOperations } from '../services/operations';
 import type { AlertSource, HistoryPage, SourceSnapshot } from '../services/source';
 import { buildDemoAlerts, DEMO_ESCALATIONS, DEMO_ME, DEMO_RESPONDER_NAMES, DEMO_SCHEDULES, DEMO_TEAMS, DEMO_USERS } from './demoData';
@@ -37,8 +38,14 @@ export class DemoSource implements AlertSource, AlertOperations {
   /** Delay that imitates Jira's asynchronous processing, in milliseconds. */
   actionDelayMs = 350;
 
-  constructor(rules: ExtractionRules, extraAlerts = 0, now = Date.now()) {
-    this.ctx = { rules, teamNames: DEMO_TEAMS, otherNames: DEMO_RESPONDER_NAMES, alertUrl: () => null };
+  constructor(rules: ExtractionRules, extraAlerts = 0, now = Date.now(), customerMap: CustomerMap | null = null) {
+    this.ctx = {
+      rules,
+      teamNames: DEMO_TEAMS,
+      otherNames: DEMO_RESPONDER_NAMES,
+      alertUrl: () => null,
+      ...(customerMap ? { customersForEntity: (entity: string | null) => customerMap.lookup(entity) } : {}),
+    };
     const alerts = new Map<string, AlertDetail>();
     let skipped = 0;
     for (const raw of buildDemoAlerts(now, extraAlerts)) {
@@ -94,11 +101,13 @@ export class DemoSource implements AlertSource, AlertOperations {
 
     switch (action.action) {
       case 'acknowledge':
-        Object.assign(next, { status: 'acked', acknowledged: true, snoozed: false, snoozedUntil: undefined, ackTime: now });
+        // As seen on a live site: acknowledging makes the acknowledging account the owner.
+        Object.assign(next, { status: 'acked', acknowledged: true, snoozed: false, snoozedUntil: undefined, ackTime: now, owner: raw.owner ?? DEMO_ME.displayName });
         text = 'Alert acknowledged';
         break;
       case 'unacknowledge':
-        Object.assign(next, { status: 'open', acknowledged: false, ackTime: undefined });
+        // ...and unacknowledging clears the owner again.
+        Object.assign(next, { status: 'open', acknowledged: false, ackTime: undefined, owner: undefined });
         text = 'Alert unacknowledged';
         break;
       case 'close':
@@ -147,6 +156,10 @@ export class DemoSource implements AlertSource, AlertOperations {
       case 'addTags':
         next.tags = [...new Set([...(raw.tags ?? []), ...action.tags])];
         text = `Tags added: ${action.tags.join(', ')}`;
+        break;
+      case 'customAction':
+        if (!(raw.actions ?? []).includes(action.actionName)) throw new JiraApiError('validation', 422, 'Jira rejected the request (422).');
+        text = `Custom action "${action.actionName}" executed`;
         break;
       case 'removeTags': {
         const remove = new Set(action.tags);

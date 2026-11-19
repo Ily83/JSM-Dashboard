@@ -5,6 +5,7 @@ import {
   isHotspotDimension,
   type AnalysisSettings,
 } from '../lib/historyBreakdowns';
+import { isResponseDimension } from '../lib/responseTimes';
 import { createPersistentStore, deepEqual, isRecord } from '../lib/store';
 
 /** A saved History analysis: date range (UTC), filters and breakdown. */
@@ -41,6 +42,7 @@ export function sanitizeInvestigation(stored: unknown): HistoryInvestigation | n
     breakdown: isBreakdown(stored.breakdown) ? stored.breakdown : defaults.breakdown,
     p1Only: stored.p1Only === true,
     dimension: isHotspotDimension(stored.dimension) ? stored.dimension : defaults.dimension,
+    responseBy: isResponseDimension(stored.responseBy) ? stored.responseBy : defaults.responseBy,
   };
 }
 
@@ -78,6 +80,7 @@ function pick(input: InvestigationInput): InvestigationInput {
     breakdown: input.breakdown,
     p1Only: input.p1Only,
     dimension: input.dimension,
+    responseBy: input.responseBy,
   };
 }
 

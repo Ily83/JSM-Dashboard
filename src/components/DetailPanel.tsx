@@ -1,13 +1,17 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Check, Copy, ExternalLink, X } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { BookOpen, Check, Copy, ExternalLink, Star, X } from 'lucide-react';
 import type { Alert, AlertDetail } from '../../shared/types';
 import { useAlertDetail, useMe, useWriteActions } from '../api/hooks';
 import { formatAbsolute, formatRelative } from '../lib/format';
 import { useNow } from '../lib/now';
-import { ActionFeedback, AlertActions } from './actions/AlertActions';
+import { useStore } from '../lib/store';
+import { prefsStore, toggleWatch } from '../state/prefs';
+import { ActionFeedback, AlertActions, typingIn } from './actions/AlertActions';
 import { ActivitySection, AttachmentsSection, NotesSection, TagEditor } from './actions/AlertExtras';
 import { useActionRunner } from './actions/useActionRunner';
+import { MaintenanceBadge } from './dashboard/opsWidgets';
 import { CustomerBadge, PriorityBadge, StatusBadge } from './ui/badges';
+import { findRunbook, Linkify } from './ui/Linkify';
 
 interface DetailPanelProps {
   /** Row data, shown immediately while the full detail loads. Null when the alert is not in the list. */
@@ -76,14 +80,38 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
   const me = useMe(allowed.size > 0).data;
   // Prefer the list row for fields both have: it is refreshed by every poll.
   const base: Alert | null = alert ?? detail ?? null;
+  const watched = useStore(prefsStore).watchList.includes(alertId);
+  const runbook = detail ? findRunbook(detail.extraProperties, detail.description) : null;
+  const panelRef = useRef<HTMLElement>(null);
+  const url = base?.url ?? null;
 
+  // Esc closes. W watches, O opens in Jira, N jumps to the note field
+  // (the action keys A, U and C live in AlertActions).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented) onClose();
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        onClose();
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || typingIn(event.target)) return;
+      const key = event.key.toLowerCase();
+      if (key === 'w') {
+        event.preventDefault();
+        toggleWatch(alertId);
+      } else if (key === 'o' && url) {
+        event.preventDefault();
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } else if (key === 'n') {
+        const field = panelRef.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label="New note"]');
+        if (field) {
+          event.preventDefault();
+          field.focus();
+        }
+      }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, alertId, url]);
 
   const closeButton = (
     <button type="button" onClick={onClose} aria-label="Close details" className="flex-none rounded p-1 text-muted hover:bg-hover hover:text-fg">
@@ -106,18 +134,44 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
 
   const responders = base.responders;
   // With the action buttons in the same row, the link gets a shorter label.
-  const compact = allowed.size > 0;
+  const alertActionsOn = [...allowed].some((id) => id !== 'maintenance');
+  const compact = alertActionsOn;
   const properties = detail ? Object.entries(detail.extraProperties) : [];
   const loading = detailQuery.isPending;
 
   return (
-    <aside aria-label="Alert details" className="detail-panel">
+    <aside ref={panelRef} aria-label="Alert details" className="detail-panel">
       <header className="flex-none px-4 pb-3 pt-3">
         <div className="flex items-center gap-2">
           <PriorityBadge priority={base.priority} />
           <StatusBadge status={base.status} />
           {base.tinyId && <span className="font-mono text-xs text-subtle">#{base.tinyId}</span>}
+          <MaintenanceBadge integrationName={base.integrationName} />
           <span className="ml-auto" />
+          {runbook && (
+            <a
+              href={runbook}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open runbook"
+              data-tip="Runbook"
+              data-tip-always=""
+              className="flex-none rounded p-1 text-muted hover:bg-hover hover:text-fg"
+            >
+              <BookOpen size={15} aria-hidden />
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={() => toggleWatch(base.id)}
+            aria-pressed={watched}
+            aria-label={watched ? 'Stop watching' : 'Watch'}
+            data-tip={watched ? 'Watching · W' : 'Watch · W'}
+            data-tip-always=""
+            className={watched ? 'flex-none rounded p-1 text-warn hover:bg-hover' : 'flex-none rounded p-1 text-muted hover:bg-hover hover:text-fg'}
+          >
+            <Star size={15} aria-hidden fill={watched ? 'currentColor' : 'none'} />
+          </button>
           {closeButton}
         </div>
         <h2 className="mt-2 break-words text-[15px] font-semibold leading-snug">{base.summary}</h2>
@@ -128,7 +182,7 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
               target="_blank"
               rel="noopener noreferrer"
               aria-label="Open in Jira"
-              data-tip={compact ? 'Open in Jira' : undefined}
+              data-tip="Open in Jira · O"
               data-tip-always=""
               className="flex h-7 items-center gap-1.5 rounded-md bg-accent px-2.5 text-xs font-semibold text-on-accent hover:opacity-90"
             >
@@ -148,7 +202,7 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
               {compact ? 'Jira' : 'Open in Jira'}
             </button>
           )}
-          {allowed.size > 0 && <AlertActions alert={base} allowed={allowed} run={runner.run} busy={runner.busy} />}
+          {alertActionsOn && <AlertActions alert={base} allowed={allowed} run={runner.run} busy={runner.busy} customActions={detail?.actions ?? []} />}
         </div>
         <ActionFeedback state={runner.state} onDismiss={runner.dismiss} />
       </header>
@@ -229,7 +283,9 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
               <div className="skeleton h-3 w-2/3" />
             </div>
           ) : detail?.description ? (
-            <p className="whitespace-pre-wrap break-words leading-relaxed">{detail.description}</p>
+            <p className="whitespace-pre-wrap break-words leading-relaxed">
+              <Linkify text={detail.description} />
+            </p>
           ) : (
             <span className="text-subtle">{detailQuery.error ? detailQuery.error.message : '–'}</span>
           )}
@@ -242,7 +298,7 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
           <dl className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-x-3">
             {properties.map(([key, value]) => (
               <Field key={key} label={key}>
-                {value}
+                <Linkify text={value} />
               </Field>
             ))}
             {base.entity && <Field label="Entity">{base.entity}</Field>}

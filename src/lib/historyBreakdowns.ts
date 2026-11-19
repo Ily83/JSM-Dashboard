@@ -1,13 +1,14 @@
 import type { Alert } from '../../shared/types';
 import { groupAlerts, rankGroups, type AlertGroup, type GroupMode } from './alertGroups';
 import { filterHistoryMonths, type HistoryMonth } from './historyAnalysis';
+import type { ResponseDimension } from './responseTimes';
 
 /**
  * Breakdowns of the alerts loaded by the History analysis. All of them work
  * on the months already in memory, so switching breakdown sends no request.
  */
 
-export const BREAKDOWNS = ['month', 'recurring', 'hotspots', 'customers'] as const;
+export const BREAKDOWNS = ['month', 'recurring', 'hotspots', 'customers', 'response'] as const;
 export type Breakdown = (typeof BREAKDOWNS)[number];
 
 export const HOTSPOT_DIMENSIONS = ['customer', 'service', 'group'] as const;
@@ -21,6 +22,8 @@ export interface AnalysisSettings {
   /** Recurring alerts and alerts per customer: count P1 alerts only. */
   p1Only: boolean;
   dimension: HotspotDimension;
+  /** Response times (MTTA, MTTR): rows per priority, customer or alert group. */
+  responseBy: ResponseDimension;
 }
 
 export const DEFAULT_ANALYSIS_SETTINGS = (): AnalysisSettings => ({
@@ -29,6 +32,7 @@ export const DEFAULT_ANALYSIS_SETTINGS = (): AnalysisSettings => ({
   breakdown: 'month',
   p1Only: false,
   dimension: 'customer',
+  responseBy: 'priority',
 });
 
 export const isBreakdown = (value: unknown): value is Breakdown => (BREAKDOWNS as readonly unknown[]).includes(value);

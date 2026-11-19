@@ -9,6 +9,8 @@ export interface QuickFilterContext {
   /** The user's name as it appears in the Assignee column (Settings → Profile). */
   me: string | null;
   myCustomers: ReadonlySet<string>;
+  /** Alerts the user watches (star in the detail panel). */
+  watched?: ReadonlySet<string>;
 }
 
 export interface QuickFilter {
@@ -41,6 +43,12 @@ export const QUICK_FILTERS = [
     label: 'Multiple Customers',
     description: 'Alerts affecting two or more customers',
     test: (a) => a.customers.length > 1,
+  },
+  {
+    id: 'watching',
+    label: 'Watching',
+    description: 'Alerts you marked with the star',
+    test: (a, ctx) => ctx.watched?.has(a.id) ?? false,
   },
   {
     id: 'myCustomers',

@@ -1,6 +1,6 @@
 {
   "name": "jira-operations-alert-center",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Read-only alert console for Jira Service Management Cloud Operations",
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
@@ -10,7 +10,10 @@
     "start": "tsx server/index.ts --production",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "jira:test-alerts": "tsx scripts/jira-test-alerts.ts"
+    "jira:test-alerts": "tsx scripts/jira-test-alerts.ts",
+    "jira:simulate": "tsx scripts/jira-simulate.ts",
+    "e2e": "npm run build && playwright test --project=demo",
+    "e2e:live": "npm run build && playwright test --project=live"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.108.0",
@@ -25,6 +28,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "@tailwindcss/vite": "^4.3.5",
     "@types/compression": "^1.8.1",
     "@types/express": "^5.0.6",

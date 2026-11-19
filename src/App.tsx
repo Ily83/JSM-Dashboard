@@ -6,6 +6,8 @@ import type { Alert } from '../shared/types';
 import { ApiRequestError } from './api/client';
 import { useAlerts, useStatus, useWriteActions } from './api/hooks';
 import { BulkActionBar } from './components/actions/BulkActions';
+import { useP1Alarm } from './components/useP1Alarm';
+import { requestDesktopPermission, unlockAudio } from './lib/alarm';
 import { CustomerScope } from './components/CustomerScope';
 import { Dashboard } from './components/dashboard/Dashboard';
 import type { WidgetActions } from './components/dashboard/widgets';
@@ -17,9 +19,12 @@ import { Sidebar } from './components/Sidebar';
 import { AlertTable } from './components/table/AlertTable';
 import type { CellOptions } from './components/table/columns';
 import { ColumnsMenu } from './components/table/ColumnsMenu';
+import { LanesMenu } from './components/table/LanesMenu';
 import { TopBar } from './components/TopBar';
 import { TooltipLayer } from './components/ui/TooltipLayer';
 import { ViewsMenu } from './components/ViewsMenu';
+import { CopyLinkButton } from './components/CopyLinkButton';
+import { useViewUrlSync } from './state/viewUrlSync';
 import { QUICK_FILTERS, type QuickFilterContext, type QuickFilterId } from './config/quickFilters';
 import { SECTIONS, SECTION_IDS, inSection, type SectionId } from './config/sections';
 import { cn } from './lib/cn';
@@ -60,7 +65,9 @@ export function App() {
   const status = useStatus();
   const refreshSeconds = prefs.refreshSeconds ?? status.data?.defaultRefreshSeconds ?? 60;
   const onHistory = route.page === 'history';
-  const alertsQuery = useAlerts(refreshSeconds, !onHistory);
+  const alarmOn = prefs.p1Sound || prefs.p1Desktop;
+  // With the P1 alarm on, alerts keep being polled on History and in a hidden tab.
+  const alertsQuery = useAlerts(refreshSeconds, !onHistory || alarmOn, alarmOn);
   const loadedAlerts = alertsQuery.data?.alerts ?? NO_ALERTS;
   const meta = alertsQuery.data?.meta;
   // Customer scope: limits KPIs, widgets, section and quick-filter counts and
@@ -71,12 +78,14 @@ export function App() {
 
   const section = SECTIONS[route.section];
   const view = views.current;
+  // Filters, search and sorting live in the address too, so a view can be shared as a link.
+  useViewUrlSync(route, view);
   // Typing stays responsive on large lists: filtering follows a beat behind.
   const deferredSearch = useDeferredValue(view.search);
 
   const profile = useMemo<QuickFilterContext>(
-    () => ({ me: prefs.profile.name, myCustomers: new Set(prefs.profile.customers) }),
-    [prefs.profile],
+    () => ({ me: prefs.profile.name, myCustomers: new Set(prefs.profile.customers), watched: new Set(prefs.watchList) }),
+    [prefs.profile, prefs.watchList],
   );
 
   // Everything below derives from the one cached list: no request is made
@@ -112,6 +121,18 @@ export function App() {
     [loadedAlerts, route.alertId],
   );
 
+  const openFromAlarm = useCallback((id: string) => navigate({ page: 'alerts', section: 'critical', alertId: id }), []);
+  useP1Alarm(alertsQuery.data?.alerts, prefs.p1Sound, prefs.p1Desktop, openFromAlarm);
+  const toggleAlarm = useCallback(() => {
+    if (alarmOn) {
+      patchPrefs({ p1Sound: false, p1Desktop: false });
+      return;
+    }
+    // Called from the click: the only moment browsers allow these.
+    unlockAudio();
+    void requestDesktopPermission().then((permission) => patchPrefs({ p1Sound: true, p1Desktop: permission === 'granted' }));
+  }, [alarmOn]);
+
   const selectAlert = useCallback((id: string) => navigate({ alertId: id }, { replace: true }), []);
   const closeDetail = useCallback(() => navigate({ alertId: null }, { replace: true }), []);
   const changeView = useCallback((patch: Partial<ViewState>) => patchCurrentView(patch), []);
@@ -138,8 +159,8 @@ export function App() {
   );
 
   const cellOptions = useMemo<CellOptions>(
-    () => ({ timeFormat: prefs.timeFormat, showTags: prefs.showTags, showOccurrences: prefs.showOccurrences }),
-    [prefs.timeFormat, prefs.showTags, prefs.showOccurrences],
+    () => ({ timeFormat: prefs.timeFormat, showTags: prefs.showTags, showOccurrences: prefs.showOccurrences, watched: profile.watched }),
+    [prefs.timeFormat, prefs.showTags, prefs.showOccurrences, profile.watched],
   );
 
   const requestError = alertsQuery.error instanceof ApiRequestError || alertsQuery.error ? (alertsQuery.error?.message ?? null) : null;
@@ -223,6 +244,11 @@ export function App() {
           theme={prefs.theme}
           onThemeChange={(theme) => patchPrefs({ theme })}
           showLiveControls={!onHistory}
+          alarm={{
+            on: alarmOn,
+            tip: alarmOn ? `P1 alarm on: ${[prefs.p1Sound && 'sound', prefs.p1Desktop && 'desktop'].filter(Boolean).join(' + ')}` : 'P1 alarm off',
+            onToggle: toggleAlarm,
+          }}
           scope={
             route.page === 'alerts' ? (
               <CustomerScope options={scopeOptions} scope={customerScope} myCustomers={prefs.profile.customers} onChange={(next) => patchPrefs({ customerScope: next })} />
@@ -289,6 +315,7 @@ export function App() {
                   total={sectionTotal}
                 >
                   <ViewsMenu section={section.id} />
+                  <CopyLinkButton section={section.id} view={view} alertId={route.alertId} />
                   <button
                     type="button"
                     onClick={() => patchPrefs({ density: nextDensity })}
@@ -313,6 +340,7 @@ export function App() {
                   >
                     <Layers size={15} aria-hidden />
                   </button>
+                  <LanesMenu value={prefs.laneBy} onChange={(laneBy) => patchPrefs({ laneBy })} />
                   <ColumnsMenu />
                 </FilterBar>
                 {bulkEnabled && <BulkActionBar selected={checkedAlerts} allowed={writeActions} onClear={clearChecked} />}
@@ -330,6 +358,7 @@ export function App() {
                   selection={bulkEnabled ? checked : undefined}
                   onSelectionChange={bulkEnabled ? setChecked : undefined}
                   groupRepeats={prefs.groupRepeats}
+                  laneBy={prefs.laneBy}
                 />
               </div>
             </main>

@@ -110,6 +110,7 @@ describe('JiraClient write actions (against a fake API)', () => {
     await client.performAction('a1', { action: 'priority', priority: 'P1' });
     await client.performAction('a1', { action: 'addTags', tags: ['x'] });
     await client.performAction('a1', { action: 'removeTags', tags: ['x'] });
+    await client.performAction('a1', { action: 'customAction', actionName: 'Restart service' });
     const writes = calls.filter((c) => c.method !== 'GET');
     expect(writes).toEqual([
       { method: 'POST', path: '/v1/alerts/a1/acknowledge', body: undefined },
@@ -122,9 +123,10 @@ describe('JiraClient write actions (against a fake API)', () => {
       { method: 'PATCH', path: '/v1/alerts/a1/priority', body: { priority: 'P1' } },
       { method: 'POST', path: '/v1/alerts/a1/tags', body: { tags: ['x'] } },
       { method: 'DELETE', path: '/v1/alerts/a1/tags', body: { tags: ['x'] } },
+      { method: 'POST', path: '/v1/alerts/a1/action', body: { actionName: 'Restart service' } },
     ]);
     // Every asynchronous action is followed by a status check.
-    expect(calls.filter((c) => c.path === '/v1/alerts/requests/req-1')).toHaveLength(10);
+    expect(calls.filter((c) => c.path === '/v1/alerts/requests/req-1')).toHaveLength(11);
   });
 
   it('waits while the request is not processed yet (404) and reports the outcome', async () => {
@@ -276,6 +278,17 @@ describe('POST /api/alerts/:id/actions', () => {
     servers.push(partial.server);
     const closeRefused = await fetch(`${partial.base}/api/alerts/${partial.alerts[0]!.id}/actions`, { method: 'POST', headers: actionHeaders, body: JSON.stringify({ action: 'close' }) });
     expect(closeRefused.status).toBe(403);
+  });
+
+  it('runs only custom actions the alert itself offers', async () => {
+    const { base, server, alerts } = await serve(demoConfig());
+    servers.push(server);
+    const post = (id: string, actionName: string) =>
+      fetch(`${base}/api/alerts/${id}/actions`, { method: 'POST', headers: actionHeaders, body: JSON.stringify({ action: 'customAction', actionName }) });
+    const details = await Promise.all(alerts.slice(0, 6).map(async (a) => (await (await fetch(`${base}/api/alerts/${a.id}`)).json()) as { id: string; actions: string[]; status: string }));
+    const offering = details.find((d) => d.actions.length > 0 && d.status !== 'closed')!;
+    expect((await post(offering.id, offering.actions[0]!)).status).toBe(200);
+    expect((await post(offering.id, 'rm -rf /')).status).toBe(400);
   });
 
   it('demo data follows Jira: a closed alert cannot be acknowledged', async () => {

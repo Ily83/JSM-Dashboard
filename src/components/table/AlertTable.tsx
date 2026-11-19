@@ -1,10 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { getCoreRowModel, getSortedRowModel, useReactTable, type Header, type SortingState, type Updater } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
-import type { Alert } from '../../../shared/types';
-import { groupAlerts, groupSummaryAlert, type AlertGroup } from '../../lib/alertGroups';
+import { ArrowDown, ArrowUp, ChevronRight, Copy } from 'lucide-react';
+import type { Alert, Priority } from '../../../shared/types';
+import type { AlertGroup } from '../../lib/alertGroups';
 import { cn } from '../../lib/cn';
+import { alertsOfItem, buildTableItems, itemKey, type LaneBy, type TableItem } from '../../lib/tableItems';
+import { ActivityStrip } from '../ActivityStrip';
+import { CustomerBadge, PriorityBadge } from '../ui/badges';
 import { COLUMN_INFO, type ColumnId } from '../../config/columns';
 import { isCritical } from '../../config/sections';
 import { useStore } from '../../lib/store';
@@ -29,8 +32,12 @@ import { COLUMNS, renderCell, type CellOptions } from './columns';
  *  - Selection: a checkbox column (Shift+click selects a range, X toggles
  *    the focused row) for bulk actions.
  *  - Group repeats: alerts that share a group key (src/lib/alertGroups.ts)
- *    collapse into one expandable row showing distinct records and total
- *    occurrences. Groups keep the position of their first sorted alert.
+ *    collapse into one expandable row showing distinct records, total
+ *    occurrences and a 24-hour activity strip. Groups keep the position of
+ *    their first sorted alert.
+ *  - Lanes: the rows are split by customer, service or team, each lane with
+ *    a collapsible header (src/lib/tableItems.ts). An alert with several
+ *    customers appears in each of their lanes, marked as such.
  */
 
 const HEADER_HEIGHT = 32;
@@ -54,14 +61,7 @@ interface AlertTableProps {
   selection?: ReadonlySet<string>;
   onSelectionChange?: (next: Set<string>) => void;
   groupRepeats?: boolean;
-}
-
-type Item =
-  | { kind: 'alert'; alert: Alert; child: boolean }
-  | { kind: 'group'; group: AlertGroup; summary: Alert; expanded: boolean };
-
-function alertsOf(item: Item): Alert[] {
-  return item.kind === 'alert' ? [item.alert] : item.group.alerts;
+  laneBy?: LaneBy;
 }
 
 interface RowColumn {
@@ -91,6 +91,7 @@ export const AlertTable = memo(function AlertTable({
   selection,
   onSelectionChange,
   groupRepeats = false,
+  laneBy = 'off',
 }: AlertTableProps) {
   const selectable = selection !== undefined && onSelectionChange !== undefined;
   const layoutPrefs = useStore(tableLayoutStore);
@@ -145,33 +146,25 @@ export const AlertTable = memo(function AlertTable({
     [layout],
   );
 
-  // ---- Grouping ------------------------------------------------------------
+  // ---- Lanes and grouping -------------------------------------------------
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
-  const items = useMemo<Item[]>(() => {
-    const sorted = rows.map((r) => r.original);
-    if (!groupRepeats) return sorted.map((alert) => ({ kind: 'alert', alert, child: false }));
-    const out: Item[] = [];
-    for (const group of groupAlerts(sorted)) {
-      if (group.records === 1) {
-        out.push({ kind: 'alert', alert: group.alerts[0]!, child: false });
-        continue;
-      }
-      const isOpen = expanded.has(group.key);
-      out.push({ kind: 'group', group, summary: groupSummaryAlert(group), expanded: isOpen });
-      // Members keep the table's sort order.
-      if (isOpen) for (const alert of group.alerts) out.push({ kind: 'alert', alert, child: true });
-    }
-    return out;
-  }, [rows, groupRepeats, expanded]);
+  const [collapsedLanes, setCollapsedLanes] = useState<ReadonlySet<string>>(() => new Set());
+  const items = useMemo<TableItem[]>(
+    () => buildTableItems(rows.map((r) => r.original), { laneBy, groupRepeats, expanded, collapsedLanes }),
+    [rows, laneBy, groupRepeats, expanded, collapsedLanes],
+  );
 
-  const toggleGroup = useCallback((key: string) => {
-    setExpanded((current) => {
+  const toggleIn = (setter: typeof setExpanded) => (key: string) =>
+    setter((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
-  }, []);
+  const toggleGroup = useCallback(toggleIn(setExpanded), []);
+  const toggleLane = useCallback(toggleIn(setCollapsedLanes), []);
+  // Group rows show activity up to now; refreshed with the data, not by a timer.
+  const activityEnd = useMemo(() => Date.now(), [rows]);
 
   // ---- Selection -----------------------------------------------------------
   const lastChecked = useRef<number | null>(null);
@@ -187,12 +180,12 @@ export const AlertTable = memo(function AlertTable({
       const list = itemsRef.current;
       const target = list[index];
       if (!target) return;
-      const turnOn = !alertsOf(target).every((a) => current.has(a.id));
+      const turnOn = !alertsOfItem(target).every((a) => current.has(a.id));
       const from = range && lastChecked.current !== null ? Math.min(lastChecked.current, index) : index;
       const to = range && lastChecked.current !== null ? Math.max(lastChecked.current, index) : index;
       const next = new Set(current);
       for (let i = from; i <= to; i += 1) {
-        for (const alert of alertsOf(list[i]!)) {
+        for (const alert of alertsOfItem(list[i]!)) {
           if (turnOn) next.add(alert.id);
           else next.delete(alert.id);
         }
@@ -262,12 +255,18 @@ export const AlertTable = memo(function AlertTable({
       focusRow(moves[event.key]!);
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      if (item?.kind === 'group') toggleGroup(item.group.key);
+      if (item?.kind === 'group') toggleGroup(item.key);
+      else if (item?.kind === 'lane') toggleLane(item.key);
       else if (item) handleSelect(item.alert.id, index);
     } else if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && item?.kind === 'group') {
       if (item.expanded !== (event.key === 'ArrowRight')) {
         event.preventDefault();
-        toggleGroup(item.group.key);
+        toggleGroup(item.key);
+      }
+    } else if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && item?.kind === 'lane') {
+      if (item.collapsed === (event.key === 'ArrowRight')) {
+        event.preventDefault();
+        toggleLane(item.key);
       }
     } else if ((event.key === 'x' || event.key === 'X') && selectable && !event.ctrlKey && !event.metaKey) {
       event.preventDefault();
@@ -373,28 +372,52 @@ export const AlertTable = memo(function AlertTable({
               options: cellOptions,
               onCheck: selectable ? onCheck : undefined,
             };
+            const key = itemKey(item);
+            if (item.kind === 'lane') {
+              const count = selectable ? item.alerts.reduce((n, a) => n + (selection!.has(a.id) ? 1 : 0), 0) : 0;
+              return (
+                <LaneRow
+                  key={key}
+                  {...common}
+                  laneKey={item.key}
+                  name={item.name}
+                  isNone={item.isNone}
+                  laneBy={laneBy}
+                  total={item.alerts.length}
+                  shared={item.shared}
+                  p1={item.p1}
+                  priority={item.priority}
+                  collapsed={item.collapsed}
+                  checked={count === 0 ? false : count === item.alerts.length ? true : 'mixed'}
+                  onToggle={toggleLane}
+                />
+              );
+            }
             if (item.kind === 'group') {
               const members = item.group.alerts;
               const count = selectable ? members.reduce((n, a) => n + (selection!.has(a.id) ? 1 : 0), 0) : 0;
               return (
                 <GroupRow
-                  key={`group:${item.group.key}`}
+                  key={key}
                   {...common}
+                  itemKey={item.key}
                   group={item.group}
                   summary={item.summary}
                   expanded={item.expanded}
                   checked={count === 0 ? false : count === members.length ? true : 'mixed'}
                   critical={highlightCritical && isCritical(item.summary)}
+                  activityEnd={activityEnd}
                   onToggle={toggleGroup}
                 />
               );
             }
             return (
               <Row
-                key={item.alert.id}
+                key={key}
                 {...common}
                 alert={item.alert}
                 child={item.child}
+                alsoIn={item.alsoIn}
                 selected={item.alert.id === selectedId}
                 checked={selectable ? selection!.has(item.alert.id) : undefined}
                 critical={highlightCritical && isCritical(item.alert)}
@@ -423,6 +446,8 @@ interface RowBaseProps {
 interface RowProps extends RowBaseProps {
   alert: Alert;
   child: boolean;
+  /** Other lanes this alert also appears in, comma-separated; '' when none. */
+  alsoIn: string;
   selected: boolean;
   checked: boolean | undefined;
   onSelect: (id: string, index: number) => void;
@@ -449,7 +474,7 @@ function SelectCell({ index, checked, label, onCheck }: { index: number; checked
   );
 }
 
-const Row = memo(function Row({ alert, child, index, top, height, selected, checked, tabbable, columns, options, critical, onSelect, onCheck }: RowProps) {
+const Row = memo(function Row({ alert, child, alsoIn, index, top, height, selected, checked, tabbable, columns, options, critical, onSelect, onCheck }: RowProps) {
   return (
     <div
       role="row"
@@ -474,6 +499,17 @@ const Row = memo(function Row({ alert, child, index, top, height, selected, chec
           style={{ width: `calc(var(--w-${column.id}) * 1px)` }}
         >
           {renderCell(column.id, alert, column.size, options)}
+          {column.id === 'summary' && alsoIn && (
+            <span
+              className="flex flex-none items-center gap-0.5 rounded border border-line-strong px-1 text-[10px] leading-4 text-muted"
+              data-tip={`Also in: ${alsoIn}`}
+              data-tip-always=""
+              aria-label={`Also in: ${alsoIn}`}
+            >
+              <Copy size={10} aria-hidden />
+              {alsoIn.split(', ').length}
+            </span>
+          )}
         </div>
       ))}
     </div>
@@ -481,15 +517,19 @@ const Row = memo(function Row({ alert, child, index, top, height, selected, chec
 });
 
 interface GroupRowProps extends RowBaseProps {
+  /** Expansion key (unique across lanes). */
+  itemKey: string;
   group: AlertGroup;
   summary: Alert;
   expanded: boolean;
   checked: boolean | 'mixed';
+  /** End of the 24-hour activity strip, epoch ms. */
+  activityEnd: number;
   onToggle: (key: string) => void;
 }
 
 /** One row standing for a group of repeated alerts; click to expand. */
-const GroupRow = memo(function GroupRow({ group, summary, expanded, checked, index, top, height, tabbable, columns, options, critical, onToggle, onCheck }: GroupRowProps) {
+const GroupRow = memo(function GroupRow({ itemKey: key, group, summary, expanded, checked, activityEnd, index, top, height, tabbable, columns, options, critical, onToggle, onCheck }: GroupRowProps) {
   const tip = `${group.records} alert records · ${group.occurrences} occurrences\nGrouped by ${group.basis === 'alias' ? 'alias' : 'source and similar summary'}`;
   return (
     <div
@@ -503,7 +543,7 @@ const GroupRow = memo(function GroupRow({ group, summary, expanded, checked, ind
       tabIndex={tabbable ? 0 : -1}
       className="at-row"
       style={{ transform: `translateY(${top}px)`, height, width: 'var(--table-width)' }}
-      onClick={() => onToggle(group.key)}
+      onClick={() => onToggle(key)}
     >
       {onCheck && <SelectCell index={index} checked={checked} label={`Select ${group.records} alerts in this group`} onCheck={onCheck} />}
       {columns.map((column) => (
@@ -517,6 +557,7 @@ const GroupRow = memo(function GroupRow({ group, summary, expanded, checked, ind
               <span className="flex-none rounded-full bg-accent-soft px-1.5 text-[11px] font-semibold leading-4 tabular-nums text-accent" data-tip={tip} data-tip-always="">
                 {group.records} alerts{options.showOccurrences && group.occurrences > group.records ? ` · ×${group.occurrences}` : ''}
               </span>
+              <ActivityStrip alerts={group.alerts} end={activityEnd} />
             </>
           ) : column.id === 'tinyId' ? (
             <span className="truncate text-xs text-subtle">{group.records} alerts</span>
@@ -525,6 +566,61 @@ const GroupRow = memo(function GroupRow({ group, summary, expanded, checked, ind
           )}
         </div>
       ))}
+    </div>
+  );
+});
+
+interface LaneRowProps extends Omit<RowBaseProps, 'critical' | 'columns' | 'options'> {
+  laneKey: string;
+  name: string;
+  isNone: boolean;
+  laneBy: LaneBy;
+  total: number;
+  shared: number;
+  p1: number;
+  priority: Priority;
+  collapsed: boolean;
+  checked: boolean | 'mixed';
+  onToggle: (key: string) => void;
+}
+
+/** Header of one lane: name, most urgent priority, counts. Click to collapse. */
+const LaneRow = memo(function LaneRow({ laneKey, name, isNone, laneBy, total, shared, p1, priority, collapsed, checked, index, top, height, tabbable, onToggle, onCheck }: LaneRowProps) {
+  return (
+    <div
+      role="row"
+      aria-rowindex={index + 2}
+      aria-expanded={!collapsed}
+      data-index={index}
+      data-lane="true"
+      tabIndex={tabbable ? 0 : -1}
+      className="at-row"
+      style={{ transform: `translateY(${top}px)`, height, width: 'var(--table-width)' }}
+      onClick={() => onToggle(laneKey)}
+    >
+      {onCheck && <SelectCell index={index} checked={checked} label={`Select ${total} alerts in ${name}`} onCheck={onCheck} />}
+      <div role="gridcell" className="at-cell sticky left-0 min-w-0 flex-1">
+        <ChevronRight size={14} aria-hidden className={cn('flex-none text-muted transition-transform', !collapsed && 'rotate-90')} />
+        {laneBy === 'customer' && !isNone ? <CustomerBadge name={name} /> : <span className={cn('truncate', isNone && 'text-muted')}>{name}</span>}
+        <span className="flex-none tabular-nums text-muted" data-tip={`${total} alerts in this lane`} data-tip-always="">
+          {total}
+        </span>
+        {p1 > 0 ? (
+          <span className="flex-none text-[11px] font-semibold tabular-nums text-crit" data-tip={`${p1} P1 alerts`} data-tip-always="">
+            {p1} P1
+          </span>
+        ) : (
+          <span data-tip="Most urgent priority in this lane" data-tip-always="">
+            <PriorityBadge priority={priority} />
+          </span>
+        )}
+        {shared > 0 && (
+          <span className="flex flex-none items-center gap-0.5 text-[11px] font-normal text-subtle" data-tip={`${shared} of these alerts also appear in other lanes`} data-tip-always="">
+            <Copy size={11} aria-hidden />
+            {shared}
+          </span>
+        )}
+      </div>
     </div>
   );
 });

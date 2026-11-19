@@ -1,5 +1,5 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
-import { FilterX, Plus, Search, X } from 'lucide-react';
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { CircleHelp, FilterX, Plus, Search, TriangleAlert, X } from 'lucide-react';
 import {
   FILTER_FIELDS,
   type DateFieldId,
@@ -20,6 +20,7 @@ import {
   type Filters,
   type SetCondition,
 } from '../../lib/filterEngine';
+import { checkQuery, QUERY_HELP } from '../../lib/query';
 import { navigate } from '../../lib/router';
 import { patchPrefs, type Profile } from '../../state/prefs';
 import type { ViewState } from '../../state/views';
@@ -64,6 +65,7 @@ export const FilterBar = memo(function FilterBar({
 }: FilterBarProps) {
   const searchRef = useRef<HTMLInputElement>(null);
   const { filters, search, quick } = view;
+  const queryCheck = useMemo(() => checkQuery(search), [search]);
   /** Filters added from "More" during this session. */
   const [extra, setExtra] = useState<FilterFieldId[]>([]);
   const [justAdded, setJustAdded] = useState<FilterFieldId | null>(null);
@@ -101,8 +103,11 @@ export const FilterBar = memo(function FilterBar({
     return { ...condition, include: condition.include.filter((v) => allowed.includes(v)), exclude: condition.exclude.filter((v) => allowed.includes(v)) };
   };
 
+  // "My Customers" and "Watching" appear once there is something to show.
   const quickFilters = QUICK_FILTERS.filter(
-    (q) => q.id !== 'myCustomers' || profile.customers.length > 0 || quick === 'myCustomers',
+    (q) =>
+      quick === q.id ||
+      (q.id === 'myCustomers' ? profile.customers.length > 0 : q.id === 'watching' ? quickCounts.watching > 0 : true),
   );
 
   return (
@@ -124,7 +129,13 @@ export const FilterBar = memo(function FilterBar({
             placeholder="Search alerts"
             aria-label="Search alerts"
             aria-keyshortcuts="/"
-            className="h-7 w-full rounded-md border border-line-strong bg-bg pl-7 pr-7 text-xs text-fg placeholder:text-subtle [&::-webkit-search-cancel-button]:hidden"
+            aria-invalid={!queryCheck.ok || undefined}
+            aria-describedby={!queryCheck.ok ? 'search-error' : undefined}
+            spellCheck={false}
+            className={cn(
+              'h-7 w-full rounded-md border bg-bg pl-7 pr-7 text-xs text-fg placeholder:text-subtle [&::-webkit-search-cancel-button]:hidden',
+              !queryCheck.ok ? 'border-crit' : queryCheck.structured ? 'border-accent font-mono' : 'border-line-strong',
+            )}
           />
           {search ? (
             <button
@@ -142,6 +153,21 @@ export const FilterBar = memo(function FilterBar({
             <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-line-strong px-1 font-mono text-[10px] text-subtle">/</kbd>
           )}
         </div>
+        <span
+          className="-ml-1 flex size-5 flex-none cursor-help items-center justify-center text-subtle hover:text-fg"
+          data-tip={QUERY_HELP}
+          data-tip-always=""
+          aria-label="Search syntax"
+          role="img"
+        >
+          <CircleHelp size={13} aria-hidden />
+        </span>
+        {!queryCheck.ok && (
+          <span id="search-error" role="alert" className="flex max-w-56 flex-none items-center gap-1 text-[11px] font-medium text-crit" data-tip={`${queryCheck.error}\nSearching the words instead.`} data-tip-always="">
+            <TriangleAlert size={12} aria-hidden className="flex-none" />
+            <span className="truncate">{queryCheck.error}</span>
+          </span>
+        )}
 
         {showQuickFilters && (
           <div role="radiogroup" aria-label="Quick filters" className="flex min-w-0 flex-wrap items-center gap-1">

@@ -10,12 +10,17 @@ import { JiraApiError, type JiraErrorKind } from './jira/client';
 import { log } from './logger';
 import type { AlertStore } from './services/alertStore';
 import { ActionRequestError, type ActionService, type AlertOperations } from './services/operations';
+import type { MaintenanceService, OpsContextSource } from './services/opsContext';
 
 const ALERT_ID = /^[A-Za-z0-9._-]{1,128}$/;
 const OTHER_ID = /^[A-Za-z0-9:._-]{1,128}$/;
 const VERSION = /^[a-f0-9]{1,64}$/;
-/** The only route that accepts a write. */
+/** The only routes that accept a write (POST). */
 const ACTION_ROUTE = /^\/alerts\/[A-Za-z0-9._-]{1,128}\/actions$/;
+const MAINTENANCE_CREATE_ROUTE = /^\/maintenances$/;
+const MAINTENANCE_CANCEL_ROUTE = /^\/maintenances\/[A-Za-z0-9:._-]{1,128}\/cancel$/;
+const WRITE_ROUTES = [ACTION_ROUTE, MAINTENANCE_CREATE_ROUTE, MAINTENANCE_CANCEL_ROUTE];
+const isWriteRoute = (path: string) => WRITE_ROUTES.some((route) => route.test(path));
 /** Custom header that a page on another site cannot send without a CORS preflight, which is never granted. */
 export const ACTION_HEADER = 'x-alert-center-action';
 
@@ -42,12 +47,27 @@ const STATUS_FOR_KIND: Record<JiraErrorKind, number> = {
  *   GET  /api/alerts/:id/attachments/:aid    temporary download link
  *   GET  /api/directory/me | users?query= | teams | schedules | teams/:teamId/escalations
  *   GET  /api/history                        one page of alerts within a UTC date window
+ *   GET  /api/ops/maintenances | maintenance-targets | heartbeats | on-call
  *   POST /api/alerts/:id/actions             one write action (only when enabled)
+ *   POST /api/maintenances                   create a maintenance window (only when enabled)
+ *   POST /api/maintenances/:id/cancel        end or call off one (only when enabled)
+ *   GET  /healthz, /readyz                   for hosting; outside /api, no details
  *
  * Every other method and path is rejected. Writes additionally need a JSON
  * body and the ACTION_HEADER, and are refused from other origins.
  */
-export function createApp(config: AppConfig, store: AlertStore, operations: AlertOperations, actions: ActionService) {
+export interface OpsContextRoutes {
+  source: OpsContextSource;
+  maintenance: MaintenanceService;
+}
+
+export function createApp(
+  config: AppConfig,
+  store: AlertStore,
+  operations: AlertOperations,
+  actions: ActionService,
+  opsContext?: OpsContextRoutes,
+) {
   const app = express();
   app.disable('x-powered-by');
   app.use(
@@ -59,6 +79,26 @@ export function createApp(config: AppConfig, store: AlertStore, operations: Aler
     }),
   );
   app.use(compression());
+
+  // Health checks for a process manager or container platform. They are
+  // answered before the Host check, because probes arrive with the container
+  // or pod address as Host. They reveal nothing beyond up/ready, so a DNS-
+  // rebinding page gains nothing from them.
+  app.get('/healthz', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ status: 'ok' });
+  });
+  app.get('/readyz', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const meta = store.meta();
+    if (config.mode === 'demo' || meta.lastSyncAt !== null) {
+      res.json({ status: 'ready' });
+      return;
+    }
+    // Synchronisation is lazy; the first probe starts it once.
+    if (meta.lastAttemptAt === null) void store.getAlerts();
+    res.status(503).json({ status: 'starting' });
+  });
 
   // The server listens on localhost. Checking the Host header stops a
   // malicious web page from reaching it through DNS rebinding.
@@ -75,9 +115,9 @@ export function createApp(config: AppConfig, store: AlertStore, operations: Aler
   const api = express.Router();
   api.use((req, res, next) => {
     const read = req.method === 'GET' || req.method === 'HEAD';
-    const write = req.method === 'POST' && ACTION_ROUTE.test(req.path);
+    const write = req.method === 'POST' && isWriteRoute(req.path);
     if (!read && !write) {
-      res.setHeader('Allow', ACTION_ROUTE.test(req.path) ? 'POST' : 'GET, HEAD');
+      res.setHeader('Allow', isWriteRoute(req.path) ? 'POST' : 'GET, HEAD');
       res.status(405).json({ error: 'Method not allowed.' } satisfies ApiError);
       return;
     }
@@ -98,7 +138,7 @@ export function createApp(config: AppConfig, store: AlertStore, operations: Aler
         maxClosedAlerts: config.jira?.maxClosedAlerts ?? 0,
         closedLookbackHours: config.jira?.closedLookbackHours ?? 0,
       },
-      extraction: config.extraction,
+      extraction: { ...config.extraction, customerMapRules: config.customerMapRules ?? 0 },
       warnings: config.warnings,
       meta: store.meta(),
     };
@@ -211,12 +251,14 @@ export function createApp(config: AppConfig, store: AlertStore, operations: Aler
     }
   };
 
-  api.post(
-    '/alerts/:id/actions',
-    (req, res, next) => {
-      // Cross-site request forgery: a JSON body and a custom header force a
-      // CORS preflight, which this server never answers with permission.
-      // Origin and Sec-Fetch-Site are checked as a second line of defence.
+  /**
+   * Guard for every write route. Cross-site request forgery: a JSON body and
+   * a custom header force a CORS preflight, which this server never answers
+   * with permission. Origin and Sec-Fetch-Site are checked as a second line
+   * of defence. The body is parsed only after these checks, with a size cap.
+   */
+  const writeGuard = [
+    (req: Request, res: Response, next: NextFunction) => {
       const origin = req.get('origin');
       const site = req.get('sec-fetch-site');
       if (req.get(ACTION_HEADER) !== '1' || (origin !== undefined && !allowedOrigin(origin)) || site === 'cross-site') {
@@ -224,18 +266,47 @@ export function createApp(config: AppConfig, store: AlertStore, operations: Aler
         return;
       }
       if (!req.is('application/json')) {
-        res.status(415).json({ error: 'Send the action as JSON.' } satisfies ApiError);
+        res.status(415).json({ error: 'Send the request as JSON.' } satisfies ApiError);
         return;
       }
       next();
     },
     express.json({ limit: '128kb', strict: true }),
-    async (req, res) => {
-      const id = alertId(req, res);
-      if (!id) return;
-      res.json(await actions.run(id, req.body));
-    },
-  );
+  ];
+
+  api.post('/alerts/:id/actions', ...writeGuard, async (req, res) => {
+    const id = alertId(req, res);
+    if (!id) return;
+    res.json(await actions.run(id, req.body));
+  });
+
+  // ---- Operations context: maintenances, heartbeats, on-call -------------------
+  if (opsContext) {
+    const { source, maintenance } = opsContext;
+    api.get('/ops/maintenances', async (_req, res) => {
+      res.json(await source.maintenances());
+    });
+    api.get('/ops/maintenance-targets', async (_req, res) => {
+      res.json(await source.maintenanceTargets());
+    });
+    api.get('/ops/heartbeats', async (_req, res) => {
+      res.json(await source.heartbeats());
+    });
+    api.get('/ops/on-call', async (_req, res) => {
+      res.json(await source.onCall());
+    });
+    api.post('/maintenances', ...writeGuard, async (req, res) => {
+      res.status(201).json(await maintenance.create(req.body));
+    });
+    api.post('/maintenances/:id/cancel', ...writeGuard, async (req, res) => {
+      const id = String(req.params.id);
+      if (!OTHER_ID.test(id)) {
+        res.status(400).json({ error: 'Invalid maintenance id.' } satisfies ApiError);
+        return;
+      }
+      res.json(await maintenance.cancel(id, req.body));
+    });
+  }
 
   api.get('/history', async (req, res) => {
     const from = parseUtcDate(req.query.from);

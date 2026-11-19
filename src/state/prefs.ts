@@ -1,3 +1,4 @@
+import { LANE_FIELDS, type LaneBy } from '../lib/tableItems';
 import { FILTER_FIELDS, isFilterFieldId, type FilterFieldId } from '../config/filterFields';
 import { createPersistentStore, isRecord } from '../lib/store';
 
@@ -32,13 +33,23 @@ export interface Preferences {
   highlightCritical: boolean;
   /** Collapse repeated alerts (same alias, or same source and similar summary) into expandable groups. */
   groupRepeats: boolean;
+  /** Split the table into lanes by customer, service or team. */
+  laneBy: LaneBy;
   profile: Profile;
   /**
    * Customers that KPIs, widgets, counts and the table are limited to.
    * Empty: all customers. Independent of saved views.
    */
   customerScope: string[];
+  /** P1 alarm: a tone when a P1 alert arrives. */
+  p1Sound: boolean;
+  /** P1 alarm: a desktop notification when a P1 alert arrives. */
+  p1Desktop: boolean;
+  /** Alert ids the user follows ("Watching"). */
+  watchList: string[];
 }
+
+export const MAX_WATCHED = 200;
 
 export const MAX_SCOPE_CUSTOMERS = 50;
 
@@ -69,8 +80,12 @@ export const DEFAULT_PREFS = (): Preferences => ({
   showOccurrences: true,
   highlightCritical: true,
   groupRepeats: false,
+  laneBy: 'off',
   profile: { name: null, customers: [] },
   customerScope: [],
+  p1Sound: false,
+  p1Desktop: false,
+  watchList: [],
 });
 
 const bool = (value: unknown, fallback: boolean) => (typeof value === 'boolean' ? value : fallback);
@@ -95,6 +110,7 @@ export function sanitizePrefs(stored: unknown, fallback: Preferences = DEFAULT_P
     showOccurrences: bool(stored.showOccurrences, true),
     highlightCritical: bool(stored.highlightCritical, true),
     groupRepeats: bool(stored.groupRepeats, false),
+    laneBy: (LANE_FIELDS as readonly unknown[]).includes(stored.laneBy) ? (stored.laneBy as LaneBy) : 'off',
     profile: {
       name: typeof profile.name === 'string' && profile.name.trim() !== '' ? profile.name.trim().slice(0, 120) : null,
       customers: Array.isArray(profile.customers)
@@ -102,6 +118,11 @@ export function sanitizePrefs(stored: unknown, fallback: Preferences = DEFAULT_P
         : [],
     },
     customerScope: sanitizeNames(stored.customerScope, MAX_SCOPE_CUSTOMERS),
+    p1Sound: bool(stored.p1Sound, false),
+    p1Desktop: bool(stored.p1Desktop, false),
+    watchList: Array.isArray(stored.watchList)
+      ? [...new Set(stored.watchList.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(id)))].slice(-MAX_WATCHED)
+      : [],
   };
 }
 
@@ -109,4 +130,11 @@ export const prefsStore = createPersistentStore<Preferences>('prefs:v1', DEFAULT
 
 export function patchPrefs(patch: Partial<Preferences>): void {
   prefsStore.set((prefs) => ({ ...prefs, ...patch }));
+}
+
+export function toggleWatch(id: string): void {
+  prefsStore.set((prefs) => ({
+    ...prefs,
+    watchList: prefs.watchList.includes(id) ? prefs.watchList.filter((w) => w !== id) : [...prefs.watchList, id].slice(-MAX_WATCHED),
+  }));
 }

@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { BellOff, Check, CheckCheck, CircleCheck, Ellipsis, Loader2, RotateCcw, TriangleAlert, UserPlus, X } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { BellOff, Check, CheckCheck, CircleCheck, Ellipsis, Loader2, Play, RotateCcw, TriangleAlert, UserPlus, X } from 'lucide-react';
 import type { ActionId, AlertAction } from '../../../shared/actions';
 import type { Alert } from '../../../shared/types';
 import { cn } from '../../lib/cn';
@@ -24,11 +24,19 @@ interface AlertActionsProps {
   allowed: ReadonlySet<ActionId>;
   run: (action: AlertAction) => Promise<boolean>;
   busy: boolean;
+  /** The alert's own custom actions, from its detail. */
+  customActions: string[];
 }
 
-type Submenu = 'responder' | 'escalate' | 'priority' | null;
+type Submenu = 'responder' | 'escalate' | 'priority' | { custom: string } | null;
 
-export function AlertActions({ alert, allowed, run, busy }: AlertActionsProps) {
+/** True while the user types somewhere: single-key shortcuts must not fire. */
+export function typingIn(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.closest('[role="dialog"]') !== null;
+}
+
+export function AlertActions({ alert, allowed, run, busy, customActions }: AlertActionsProps) {
   const closed = alert.status === 'closed';
   const [confirmClose, setConfirmClose] = useState(false);
   useEffect(() => {
@@ -38,20 +46,57 @@ export function AlertActions({ alert, allowed, run, busy }: AlertActionsProps) {
   }, [confirmClose]);
 
   const can = (id: ActionId) => allowed.has(id);
+  const custom = can('customAction') ? customActions : [];
   const more = (['addResponder', 'escalate', 'priority'] as const).filter(can);
   const [submenu, setSubmenu] = useState<Submenu>(null);
+
+  // Single-key shortcuts for the alert in the panel: A acknowledge,
+  // U unacknowledge, C close (then Enter or C again to confirm).
+  const latest = useRef({ alert, busy, closed, confirmClose, can, run });
+  latest.current = { alert, busy, closed, confirmClose, can, run };
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      // Esc cancels a pending close before it closes the panel.
+      if (event.key === 'Escape' && latest.current.confirmClose && !event.defaultPrevented) {
+        event.preventDefault();
+        setConfirmClose(false);
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || typingIn(event.target)) return;
+      const { alert: a, busy: b, closed: isClosed, confirmClose: confirming, can: allowedNow, run: send } = latest.current;
+      if (b) return;
+      const key = event.key.toLowerCase();
+      if (key === 'a' && allowedNow('acknowledge') && !isClosed && !a.acknowledged) {
+        event.preventDefault();
+        void send({ action: 'acknowledge' });
+      } else if (key === 'u' && allowedNow('unacknowledge') && !isClosed && a.acknowledged) {
+        event.preventDefault();
+        void send({ action: 'unacknowledge' });
+      } else if (key === 'c' && allowedNow('close') && !isClosed) {
+        event.preventDefault();
+        if (confirming) {
+          setConfirmClose(false);
+          void send({ action: 'close' });
+        } else {
+          setConfirmClose(true);
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <>
       {alert.acknowledged && !closed
         ? can('unacknowledge') && (
-            <button type="button" className={button} disabled={busy} onClick={() => void run({ action: 'unacknowledge' })} data-tip="Back to open (shown as Open in Jira)" data-tip-always="">
+            <button type="button" className={button} disabled={busy} onClick={() => void run({ action: 'unacknowledge' })} data-tip="Back to open (shown as Open in Jira) · U" data-tip-always="">
               <RotateCcw size={13} aria-hidden />
               Unacknowledge
             </button>
           )
         : can('acknowledge') && (
-            <button type="button" className={button} disabled={busy || closed} onClick={() => void run({ action: 'acknowledge' })}>
+            <button type="button" className={button} disabled={busy || closed} onClick={() => void run({ action: 'acknowledge' })} data-tip="A" data-tip-always="">
               <CheckCheck size={13} aria-hidden className="text-info" />
               Acknowledge
             </button>
@@ -78,7 +123,7 @@ export function AlertActions({ alert, allowed, run, busy }: AlertActionsProps) {
             </button>
           </span>
         ) : (
-          <button type="button" className={button} disabled={busy || closed} onClick={() => setConfirmClose(true)}>
+          <button type="button" className={button} disabled={busy || closed} onClick={() => setConfirmClose(true)} data-tip="C" data-tip-always="">
             <CircleCheck size={13} aria-hidden className="text-ok" />
             Close
           </button>
@@ -124,7 +169,7 @@ export function AlertActions({ alert, allowed, run, busy }: AlertActionsProps) {
         </Popover>
       )}
 
-      {more.length > 0 && (
+      {(more.length > 0 || custom.length > 0) && (
         <Popover
           label="More actions"
           align="end"
@@ -144,8 +189,24 @@ export function AlertActions({ alert, allowed, run, busy }: AlertActionsProps) {
             if (submenu === 'responder') return <ResponderPicker alert={alert} onPick={(responder) => done({ action: 'addResponder', responder })} />;
             if (submenu === 'escalate') return <EscalatePicker alert={alert} onPick={(escalationId) => done({ action: 'escalate', escalationId })} />;
             if (submenu === 'priority') return <PriorityPicker current={alert.priority} onPick={(priority) => done({ action: 'priority', priority })} />;
+            if (submenu && typeof submenu === 'object') {
+              return (
+                <div className="grid w-56 gap-2 p-2">
+                  <span className="break-words text-xs font-semibold">Run “{submenu.custom}”?</span>
+                  <div className="flex gap-1">
+                    <button type="button" autoFocus className={cn(button, 'border-accent bg-accent text-on-accent hover:bg-accent hover:opacity-90')} onClick={() => done({ action: 'customAction', actionName: submenu.custom })}>
+                      <Play size={12} aria-hidden />
+                      Run
+                    </button>
+                    <button type="button" className={button} onClick={() => setSubmenu(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              );
+            }
             return (
-              <div className="w-48 p-1">
+              <div className="w-52 p-1">
                 {can('addResponder') && (
                   <button type="button" className={menuItem} onClick={() => setSubmenu('responder')}>
                     Add responder…
@@ -160,6 +221,17 @@ export function AlertActions({ alert, allowed, run, busy }: AlertActionsProps) {
                   <button type="button" className={menuItem} onClick={() => setSubmenu('priority')}>
                     Change priority…
                   </button>
+                )}
+                {custom.length > 0 && (
+                  <>
+                    {more.length > 0 && <div className="my-1 border-t border-line" />}
+                    {custom.map((name) => (
+                      <button key={name} type="button" className={menuItem} onClick={() => setSubmenu({ custom: name })}>
+                        <Play size={12} aria-hidden className="flex-none text-muted" />
+                        <span className="truncate">{name}</span>
+                      </button>
+                    ))}
+                  </>
                 )}
               </div>
             );

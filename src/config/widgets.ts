@@ -38,6 +38,10 @@ export const WIDGETS = [
   { id: 'topServices', title: 'Alerts by service', description: 'Services ranked by number of active alerts.', ...panel, defaultVisible: false },
   { id: 'topSources', title: 'Alerts by source', description: 'Monitoring sources ranked by number of active alerts.', ...panel, defaultVisible: false },
   { id: 'attention', title: 'Waiting longest', description: 'Oldest open P1 and P2 alerts nobody has acknowledged.', ...panel, w: 6, defaultVisible: false },
+  // The three below read Jira Operations configuration, so they are off until switched on.
+  { id: 'maintenance', title: 'Maintenance windows', description: 'Active and planned maintenance windows. Also marks alerts whose integration is in maintenance.', ...panel, defaultVisible: false },
+  { id: 'heartbeats', title: 'Heartbeats', description: 'Heartbeats that stopped reporting.', ...panel, h: 4, defaultVisible: false },
+  { id: 'onCall', title: 'On call now', description: 'Who is on call for each schedule.', ...panel, defaultVisible: false },
 ] as const satisfies readonly WidgetDef[];
 
 export type WidgetId = (typeof WIDGETS)[number]['id'];

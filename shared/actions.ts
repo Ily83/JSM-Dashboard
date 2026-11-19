@@ -18,6 +18,7 @@ import type { Priority, ResponderType } from './types';
  *   priority        PATCH /v1/alerts/{id}/priority        { priority }
  *   addTags         POST  /v1/alerts/{id}/tags            { tags }
  *   removeTags      DELETE /v1/alerts/{id}/tags           { tags }
+ *   customAction    POST  /v1/alerts/{id}/action          { actionName }
  * Jira processes them asynchronously; the backend follows up with
  * GET /v1/alerts/requests/{requestId} to learn the outcome.
  */
@@ -34,6 +35,8 @@ export const ACTION_IDS = [
   'priority',
   'addTags',
   'removeTags',
+  'customAction',
+  'maintenance',
 ] as const;
 export type ActionId = (typeof ACTION_IDS)[number];
 
@@ -53,6 +56,8 @@ export const ACTION_LABEL: Record<ActionId, string> = {
   priority: 'Change priority',
   addTags: 'Add tags',
   removeTags: 'Remove tags',
+  customAction: 'Run action',
+  maintenance: 'Maintenance windows',
 };
 
 export const NOTE_MAX_LENGTH = 25_000;
@@ -73,7 +78,9 @@ export type AlertAction =
   | { action: 'addNote'; note: string }
   | { action: 'priority'; priority: Priority }
   | { action: 'addTags'; tags: string[] }
-  | { action: 'removeTags'; tags: string[] };
+  | { action: 'removeTags'; tags: string[] }
+  /** One of the alert's own custom actions (the `actions` list of the alert). */
+  | { action: 'customAction'; actionName: string };
 
 /**
  * done       Jira confirmed the action.
