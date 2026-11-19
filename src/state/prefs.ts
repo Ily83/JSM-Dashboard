@@ -30,7 +30,31 @@ export interface Preferences {
   /** Show the "×N" occurrence counter next to the summary. */
   showOccurrences: boolean;
   highlightCritical: boolean;
+  /** Collapse repeated alerts (same alias, or same source and similar summary) into expandable groups. */
+  groupRepeats: boolean;
   profile: Profile;
+  /**
+   * Customers that KPIs, widgets, counts and the table are limited to.
+   * Empty: all customers. Independent of saved views.
+   */
+  customerScope: string[];
+}
+
+export const MAX_SCOPE_CUSTOMERS = 50;
+
+function sanitizeNames(value: unknown, max: number): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const name = item.trim().slice(0, 200);
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    names.push(name);
+    if (names.length >= max) break;
+  }
+  return names;
 }
 
 export const DEFAULT_PREFS = (): Preferences => ({
@@ -44,12 +68,14 @@ export const DEFAULT_PREFS = (): Preferences => ({
   showTags: true,
   showOccurrences: true,
   highlightCritical: true,
+  groupRepeats: false,
   profile: { name: null, customers: [] },
+  customerScope: [],
 });
 
 const bool = (value: unknown, fallback: boolean) => (typeof value === 'boolean' ? value : fallback);
 
-export const prefsStore = createPersistentStore<Preferences>('prefs:v1', DEFAULT_PREFS, (stored, fallback) => {
+export function sanitizePrefs(stored: unknown, fallback: Preferences = DEFAULT_PREFS()): Preferences {
   if (!isRecord(stored)) return fallback;
   const profile = isRecord(stored.profile) ? stored.profile : {};
   return {
@@ -68,14 +94,18 @@ export const prefsStore = createPersistentStore<Preferences>('prefs:v1', DEFAULT
     showTags: bool(stored.showTags, true),
     showOccurrences: bool(stored.showOccurrences, true),
     highlightCritical: bool(stored.highlightCritical, true),
+    groupRepeats: bool(stored.groupRepeats, false),
     profile: {
       name: typeof profile.name === 'string' && profile.name.trim() !== '' ? profile.name.trim().slice(0, 120) : null,
       customers: Array.isArray(profile.customers)
         ? [...new Set(profile.customers.filter((c): c is string => typeof c === 'string'))]
         : [],
     },
+    customerScope: sanitizeNames(stored.customerScope, MAX_SCOPE_CUSTOMERS),
   };
-});
+}
+
+export const prefsStore = createPersistentStore<Preferences>('prefs:v1', DEFAULT_PREFS, sanitizePrefs);
 
 export function patchPrefs(patch: Partial<Preferences>): void {
   prefsStore.set((prefs) => ({ ...prefs, ...patch }));

@@ -24,6 +24,8 @@ export interface MapContext {
   rules: ExtractionRules;
   /** Team id -> team name, from the List teams endpoint. */
   teamNames: ReadonlyMap<string, string>;
+  /** Id -> name for users, schedules and escalations, when known. */
+  otherNames?: ReadonlyMap<string, string>;
   /** Builds the "Open in Jira" link, or null when there is no Jira site. */
   alertUrl: (id: string) => string | null;
 }
@@ -129,7 +131,7 @@ export function mapAlert(raw: RawAlert, ctx: MapContext, fromDetailEndpoint = fa
       id: r.id,
       type: (RESPONDER_TYPES.has(type) ? type : 'unknown') as ResponderType,
     };
-    const name = type === 'team' ? ctx.teamNames.get(r.id) : undefined;
+    const name = type === 'team' ? ctx.teamNames.get(r.id) : ctx.otherNames?.get(r.id);
     if (name) responder.name = name;
     return responder;
   });

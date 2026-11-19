@@ -103,6 +103,21 @@ export class AlertStore {
     }
   }
 
+  /**
+   * Reads one alert again from the source, bypassing the cache, and puts the
+   * result into the list. Used after a write action. Returns null when the
+   * alert no longer exists.
+   */
+  async refreshAlert(id: string): Promise<AlertDetail | null> {
+    const detail = await this.source.loadDetail(id);
+    if (this.snapshot) {
+      if (detail) this.snapshot.alerts.set(id, detail);
+      else this.snapshot.alerts.delete(id);
+      this.rebuildList();
+    }
+    return detail;
+  }
+
   private async ensureFresh(force: boolean): Promise<void> {
     const now = Date.now();
     const age = this.lastAttemptAt === null ? Infinity : now - this.lastAttemptAt;

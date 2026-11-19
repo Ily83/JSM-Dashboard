@@ -258,6 +258,31 @@
   .at-row[data-critical='true'][aria-selected='true'] {
     box-shadow: inset 3px 0 0 var(--crit), inset 0 0 0 1px var(--accent);
   }
+  .at-row[data-checked='true']:not([aria-selected='true']) {
+    background: color-mix(in srgb, var(--accent-soft) 60%, var(--panel));
+  }
+  .at-row[data-group='true'] {
+    background: var(--raised);
+  }
+  .at-row[data-group='true']:hover {
+    background: var(--hover);
+  }
+  /* Members of an expanded group: a quiet rail on the left. */
+  .at-row[data-child='true']:not([data-critical='true']):not([aria-selected='true']) {
+    box-shadow: inset 3px 0 0 var(--line-strong);
+  }
+  .at-select {
+    flex: none;
+    justify-content: center;
+    padding: 0;
+    cursor: default;
+  }
+  .at-select input {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
   .at-cell {
     flex: none;
     display: flex;

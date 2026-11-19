@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from 'react';
-import { ArrowDown, ArrowUp, Copy, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
+import { useRef, useState, type ReactNode } from 'react';
+import { ArrowDown, ArrowUp, Copy, Download, Play, RotateCcw, Star, Trash2, Upload } from 'lucide-react';
+import { ACTION_IDS, ACTION_LABEL } from '../../shared/actions';
 import type { StatusResponse } from '../../shared/types';
 import { COLUMN_INFO } from '../config/columns';
 import { FILTER_FIELDS, type FilterFieldId } from '../config/filterFields';
@@ -7,6 +8,7 @@ import { SECTIONS } from '../config/sections';
 import { GRID_COLUMNS, WIDGET_BY_ID } from '../config/widgets';
 import { cn } from '../lib/cn';
 import { formatAbsolute } from '../lib/format';
+import { MAX_IMPORT_BYTES, parseImportFile, planViewImport, type ConflictChoice, type ImportPayload } from '../lib/preferencesTransfer';
 import { getPreferenceStorage } from '../lib/storage';
 import { suspendPersistence, useStore } from '../lib/store';
 import {
@@ -19,6 +21,7 @@ import {
 } from '../state/dashboard';
 import { DENSITIES, REFRESH_OPTIONS, patchPrefs, prefsStore, type Theme } from '../state/prefs';
 import { DEFAULT_TABLE_LAYOUT, moveColumn, setColumnVisible, tableLayoutStore } from '../state/tableLayout';
+import { applyImport, exportPreferences, exportView, TRANSFER_PARTS } from '../state/transfer';
 import {
   applyView,
   deleteView,
@@ -265,9 +268,9 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
             </select>
           </Row>
           {views.saved.length > 0 && (
-            <ul className="mt-2 grid gap-1 border-t border-line pt-2">
+            <ul className="mt-2 grid grid-cols-[minmax(0,1fr)] gap-1 border-t border-line pt-2">
               {views.saved.map((view, index) => (
-                <li key={view.id} className="flex items-center gap-1.5">
+                <li key={view.id} className="flex min-w-0 items-center gap-1">
                   <button
                     type="button"
                     aria-label={views.defaultViewId === view.id ? 'Default view' : `Make ${view.name} the default view`}
@@ -302,6 +305,19 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
                   </button>
                   <button type="button" aria-label={`Duplicate ${view.name}`} data-tip="Duplicate" data-tip-always="" onClick={() => duplicateView(view.id)} className={smallIcon}>
                     <Copy size={13} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Export ${view.name}`}
+                    data-tip="Export"
+                    data-tip-always=""
+                    onClick={() => {
+                      const file = exportView(view.id);
+                      if (file) downloadJson(`alert-center-view-${slug(view.name)}.json`, file);
+                    }}
+                    className={smallIcon}
+                  >
+                    <Download size={13} aria-hidden />
                   </button>
                   <button type="button" aria-label={`Delete ${view.name}`} data-tip="Delete" data-tip-always="" onClick={() => deleteView(view.id)} className={cn(smallIcon, 'hover:text-crit')}>
                     <Trash2 size={13} aria-hidden />
@@ -455,7 +471,15 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
           {status ? (
             <dl className="grid grid-cols-[150px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
               <dt className="text-muted">Mode</dt>
-              <dd>{status.mode === 'demo' ? 'Demo (sample data)' : 'Live · read-only'}</dd>
+              <dd>{status.mode === 'demo' ? 'Demo (sample data)' : status.readOnly ? 'Live · read-only' : 'Live · write actions on'}</dd>
+              <dt className="text-muted">Write actions</dt>
+              <dd className="break-words">
+                {status.writes.enabled
+                  ? status.writes.actions.length === ACTION_IDS.length
+                    ? `All${status.mode === 'demo' ? ' · sample data only' : ''}`
+                    : status.writes.actions.map((id) => ACTION_LABEL[id]).join(', ')
+                  : <span data-tip="JIRA_WRITE_ACTIONS in .env" data-tip-always="">Off</span>}
+              </dd>
               {status.site && (
                 <>
                   <dt className="text-muted">Jira site</dt>
@@ -497,6 +521,8 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
           )}
         </Card>
 
+        <BackupCard />
+
         <Card id="reset" title="Reset">
           <Row label="All preferences" hint="Theme, columns, dashboard, saved views, filters and profile in this browser.">
             {confirmReset ? (
@@ -527,5 +553,219 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
         </Card>
       </div>
     </div>
+  );
+}
+
+// ---- Backup -------------------------------------------------------------------
+
+function slug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'view';
+}
+
+function downloadJson(fileName: string, value: unknown): void {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+const outlineButton = 'flex h-7 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-xs font-medium hover:bg-hover';
+
+interface PendingImport {
+  fileName: string;
+  payload: ImportPayload;
+  /** Keys of the parts that will be replaced. */
+  parts: string[];
+  views: boolean;
+  choice: ConflictChoice;
+}
+
+function BackupCard() {
+  const views = useStore(viewsStore);
+  const input = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<PendingImport | null>(null);
+  const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  const readFile = async (file: File) => {
+    setPending(null);
+    if (file.size > MAX_IMPORT_BYTES) {
+      setMessage({ tone: 'error', text: `File is larger than ${MAX_IMPORT_BYTES / 1024} KB.` });
+      return;
+    }
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      setMessage({ tone: 'error', text: 'The file could not be read.' });
+      return;
+    }
+    const result = parseImportFile(text, TRANSFER_PARTS);
+    if (!result.ok) {
+      setMessage({ tone: 'error', text: result.error });
+      return;
+    }
+    setMessage(null);
+    setPending({
+      fileName: file.name,
+      payload: result.payload,
+      parts: result.payload.parts.map((p) => p.key),
+      views: result.payload.views.length > 0,
+      choice: 'keepBoth',
+    });
+  };
+
+  // Recomputed on every render, so the preview follows changes made meanwhile.
+  const plan = pending ? planViewImport(views.saved, pending.payload.views) : null;
+  const importsViews = pending !== null && plan !== null && pending.views && plan.added.length + plan.conflicts.length > 0;
+  const nothingSelected = pending !== null && pending.parts.length === 0 && !importsViews;
+
+  const confirm = () => {
+    if (!pending) return;
+    const outcome = applyImport(pending.payload, { parts: pending.parts, views: importsViews, choice: pending.choice });
+    const done = [
+      ...outcome.replacedParts,
+      outcome.viewsAdded > 0 ? `${plural(outcome.viewsAdded, 'view')} added` : '',
+      outcome.viewsReplaced > 0 ? `${plural(outcome.viewsReplaced, 'view')} replaced` : '',
+    ].filter(Boolean);
+    setPending(null);
+    setMessage({ tone: 'ok', text: done.length > 0 ? `Imported: ${done.join(' · ')}` : 'Nothing changed' });
+  };
+
+  const togglePart = (key: string, checked: boolean) =>
+    setPending((p) => (p ? { ...p, parts: checked ? [...p.parts, key] : p.parts.filter((k) => k !== key) } : p));
+
+  return (
+    <Card id="backup" title="Backup">
+      <Row label="Preferences and saved views">
+        <button
+          type="button"
+          onClick={() => downloadJson(`alert-center-preferences-${new Date().toISOString().slice(0, 10)}.json`, exportPreferences())}
+          className={outlineButton}
+        >
+          <Download size={13} aria-hidden />
+          Export
+        </button>
+        <button type="button" onClick={() => input.current?.click()} className={outlineButton}>
+          <Upload size={13} aria-hidden />
+          Import…
+        </button>
+        <input
+          ref={input}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          aria-label="Import preferences file"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) void readFile(file);
+          }}
+        />
+      </Row>
+      <p className="text-xs text-subtle">No credentials or alerts. Customer names and tags in views and profile are included.</p>
+
+      {message && (
+        <p role={message.tone === 'error' ? 'alert' : 'status'} className={cn('mt-2 text-xs', message.tone === 'error' ? 'text-crit' : 'text-ok')}>
+          {message.text}
+        </p>
+      )}
+
+      {pending && plan && (
+        <div className="mt-3 rounded-md border border-line-strong p-3" role="group" aria-label="Import preview">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="min-w-0 truncate font-medium">{pending.fileName}</span>
+            {pending.payload.exportedAt && (
+              <span className="flex-none text-xs tabular-nums text-subtle">{formatAbsolute(Date.parse(pending.payload.exportedAt))}</span>
+            )}
+          </div>
+          <ul className="mt-2 grid gap-1">
+            {pending.payload.parts.map((part) => (
+              <li key={part.key}>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 accent-(--accent)"
+                    checked={pending.parts.includes(part.key)}
+                    onChange={(event) => togglePart(part.key, event.target.checked)}
+                  />
+                  {part.label}
+                  <span className="ml-auto text-xs text-warn">Replace</span>
+                </label>
+              </li>
+            ))}
+            {pending.payload.views.length > 0 && (
+              <li>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 accent-(--accent)"
+                    checked={pending.views}
+                    onChange={(event) => setPending((p) => (p ? { ...p, views: event.target.checked } : p))}
+                  />
+                  Saved views
+                  <span className="ml-auto text-xs tabular-nums text-muted">
+                    {[
+                      `${plan.added.length} new`,
+                      plan.conflicts.length > 0 ? plural(plan.conflicts.length, 'conflict') : '',
+                      plan.identical.length > 0 ? `${plan.identical.length} unchanged` : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                </label>
+              </li>
+            )}
+          </ul>
+
+          {pending.views && plan.conflicts.length > 0 && (
+            <div className="mt-2 border-t border-line pt-2">
+              <ul className="grid gap-0.5 text-xs" aria-label="Conflicting views">
+                {plan.conflicts.slice(0, 8).map((conflict) => (
+                  <li key={conflict.imported.id} className="flex gap-2">
+                    <span className="min-w-0 truncate font-medium">{conflict.imported.name}</span>
+                    <span className="ml-auto flex-none text-subtle">
+                      {conflict.reason === 'id' ? `same id as “${conflict.existing.name}”` : 'same name'}
+                    </span>
+                  </li>
+                ))}
+                {plan.conflicts.length > 8 && <li className="text-subtle">+{plan.conflicts.length - 8}</li>}
+              </ul>
+              <div className="mt-2">
+                <Segmented<ConflictChoice>
+                  label="Conflicting views"
+                  value={pending.choice}
+                  onChange={(choice) => setPending((p) => (p ? { ...p, choice } : p))}
+                  options={[
+                    { value: 'keepBoth', label: 'Keep both' },
+                    { value: 'replace', label: 'Replace' },
+                  ]}
+                />
+              </div>
+            </div>
+          )}
+
+          {pending.payload.ignored.length > 0 && <p className="mt-2 text-xs text-warn">Ignored: {pending.payload.ignored.join(', ')}</p>}
+
+          <div className="mt-3 flex justify-end gap-1.5">
+            <button type="button" onClick={() => setPending(null)} className="h-7 rounded-md border border-line-strong px-2.5 text-xs font-medium hover:bg-hover">
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={nothingSelected}
+              onClick={confirm}
+              className="h-7 rounded-md bg-accent px-3 text-xs font-semibold text-on-accent disabled:opacity-40"
+            >
+              Import
+            </button>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }

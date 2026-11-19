@@ -1,9 +1,13 @@
 import { createApp } from './app';
 import { loadConfig, type AppConfig } from './config';
 import { DemoSource } from './demo/demoSource';
+import { JiraClient } from './jira/client';
+import { JiraOperations } from './jira/operations';
 import { JiraSource } from './jira/source';
 import { log, setLogLevel } from './logger';
 import { AlertStore } from './services/alertStore';
+import { ActionService, type AlertOperations } from './services/operations';
+import type { AlertSource } from './services/source';
 
 let config: AppConfig;
 try {
@@ -14,16 +18,31 @@ try {
 }
 setLogLevel(config.logLevel);
 
-const source = config.jira
-  ? new JiraSource(config.jira, config.extraction)
-  : new DemoSource(config.extraction, config.demoAlertCount);
+let source: AlertSource;
+let operations: AlertOperations;
+if (config.jira) {
+  // One client for everything, so concurrency limits and the cloudId are shared.
+  const client = new JiraClient(config.jira);
+  source = new JiraSource(config.jira, config.extraction, client);
+  operations = new JiraOperations(client);
+} else {
+  const demo = new DemoSource(config.extraction, config.demoAlertCount);
+  source = demo;
+  operations = demo;
+}
 const store = new AlertStore(source, config.cacheTtlSeconds * 1000);
-const app = createApp(config, store);
+const actions = new ActionService(operations, store, config.writeActions);
+const app = createApp(config, store, operations, actions);
 
 const server = app.listen(config.port, config.host, () => {
   log.info('alert center backend listening', { url: `http://${config.host}:${config.port}`, mode: config.mode });
-  if (config.mode === 'live') log.info('jira integration enabled (read-only)', { site: config.jira!.siteHost });
-  else log.info('demo mode: sample data, no requests are sent to Jira');
+  if (config.mode === 'live') {
+    log.info('jira integration enabled', { site: config.jira!.siteHost });
+    if (config.writeActions.length === 0) log.info('write actions are off (read-only); set JIRA_WRITE_ACTIONS to enable them');
+    else log.warn('write actions are ENABLED against Jira', { actions: config.writeActions.join(',') });
+  } else {
+    log.info('demo mode: sample data, no requests are sent to Jira; actions change the in-memory copy only');
+  }
   for (const warning of config.warnings) log.warn(warning);
 });
 

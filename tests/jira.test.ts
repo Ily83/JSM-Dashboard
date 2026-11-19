@@ -82,6 +82,7 @@ const config: JiraConfig = {
   requestTimeoutMs: 5000,
   enrichDetails: 'auto',
   enrichMaxPerSync: 50,
+  writeActions: [],
 };
 
 const rules: ExtractionRules = {
@@ -230,9 +231,15 @@ describe('Jira integration (against a fake API)', () => {
     const limited = (await client.listAlerts({ offset: 0, size: 10 }).catch((e: unknown) => e)) as JiraApiError;
     expect(limited.kind).toBe('rate_limit');
     expect(limited.retryAfterMs).toBe(120_000);
+    // While Jira asked to wait, nothing else is sent either.
+    const sent = jira.calls.length;
+    const waiting = (await client.listAlerts({ offset: 0, size: 10 }).catch((e: unknown) => e)) as JiraApiError;
+    expect(waiting.kind).toBe('rate_limit');
+    expect(jira.calls.length).toBe(sent);
 
     jira.setFailure(() => new Response('<html>gateway</html>', { status: 200 }));
-    const invalid = (await client.listAlerts({ offset: 0, size: 10 }).catch((e: unknown) => e)) as JiraApiError;
+    const fresh = new JiraClient(config, 4, jira.fetchImpl);
+    const invalid = (await fresh.listAlerts({ offset: 0, size: 10 }).catch((e: unknown) => e)) as JiraApiError;
     expect(invalid.kind).toBe('schema');
   });
 });

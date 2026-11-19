@@ -1,7 +1,22 @@
 import { useCallback, useRef } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import type { ActionId, AlertAction } from '../../shared/actions';
 import type { Alert, SyncMeta } from '../../shared/types';
-import { fetchAlertDetail, fetchAlerts, fetchStatus } from './client';
+import {
+  fetchAlertDetail,
+  fetchAlerts,
+  fetchAttachments,
+  fetchEscalations,
+  fetchLogs,
+  fetchMe,
+  fetchNotes,
+  fetchSchedules,
+  fetchStatus,
+  fetchTeams,
+  postAction,
+  searchUsers,
+  type ActionResponse,
+} from './client';
 
 export interface AlertsData {
   version: string;
@@ -75,5 +90,105 @@ export function useAlertDetail(id: string | null, updatedAt: number | undefined)
     staleTime: 60_000,
     gcTime: 5 * 60_000,
     retry: 1,
+  });
+}
+
+// ---- Write actions ----------------------------------------------------------
+
+const NO_ACTIONS: ActionId[] = [];
+
+/** The write actions this backend accepts; empty while loading or when read-only. */
+export function useWriteActions(): ReadonlySet<ActionId> {
+  const status = useStatus();
+  const actions = status.data?.writes.enabled ? status.data.writes.actions : NO_ACTIONS;
+  return useStableSet(actions);
+}
+
+const setCache = new WeakMap<readonly ActionId[], ReadonlySet<ActionId>>();
+function useStableSet(list: readonly ActionId[]): ReadonlySet<ActionId> {
+  let set = setCache.get(list);
+  if (!set) {
+    set = new Set(list);
+    setCache.set(list, set);
+  }
+  return set;
+}
+
+/**
+ * Puts the alert returned after an action into the cached list straight
+ * away, then lets the next poll (asked for now) bring the authoritative list.
+ */
+export function applyActionResult(queryClient: QueryClient, id: string, response: ActionResponse): void {
+  const updated = response.alert;
+  if (updated) {
+    queryClient.setQueryData<AlertsData>(ALERTS_KEY, (data) => {
+      if (!data) return data;
+      const { description: _d, rawTags: _r, extraProperties: _e, actions: _a, seen: _s, detailLoaded: _l, detailError: _x, ...row } = updated;
+      return { ...data, alerts: data.alerts.map((a) => (a.id === id ? row : a)) };
+    });
+  }
+  void queryClient.invalidateQueries({ queryKey: ALERTS_KEY });
+  void queryClient.invalidateQueries({ queryKey: ['alert', id] });
+  void queryClient.invalidateQueries({ queryKey: ['alert-notes', id] });
+  void queryClient.invalidateQueries({ queryKey: ['alert-logs', id] });
+}
+
+/** One action on one alert. */
+export function useAlertAction(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (action: AlertAction) => postAction(id, action),
+    onSuccess: (response) => applyActionResult(queryClient, id, response),
+  });
+}
+
+// ---- Notes, activity, attachments, directory --------------------------------
+
+export function useNotes(id: string) {
+  return useQuery({ queryKey: ['alert-notes', id], queryFn: ({ signal }) => fetchNotes(id, signal), staleTime: 30_000, retry: 1 });
+}
+
+export function useLogs(id: string, enabled: boolean) {
+  return useQuery({ queryKey: ['alert-logs', id], queryFn: ({ signal }) => fetchLogs(id, signal), enabled, staleTime: 30_000, retry: 1 });
+}
+
+export function useAttachments(id: string, enabled: boolean) {
+  return useQuery({ queryKey: ['alert-attachments', id], queryFn: ({ signal }) => fetchAttachments(id, signal), enabled, staleTime: 60_000, retry: 1 });
+}
+
+const DIRECTORY = { staleTime: 5 * 60_000, gcTime: 30 * 60_000, retry: 1 } as const;
+
+export function useMe(enabled = true) {
+  return useQuery({ queryKey: ['directory', 'me'], queryFn: ({ signal }) => fetchMe(signal), enabled, ...DIRECTORY });
+}
+
+export function useUserSearch(query: string) {
+  const trimmed = query.trim();
+  return useQuery({
+    queryKey: ['directory', 'users', trimmed.toLowerCase()],
+    queryFn: ({ signal }) => searchUsers(trimmed, signal),
+    enabled: trimmed.length >= 2,
+    ...DIRECTORY,
+  });
+}
+
+export function useTeams(enabled = true) {
+  return useQuery({ queryKey: ['directory', 'teams'], queryFn: ({ signal }) => fetchTeams(signal), enabled, ...DIRECTORY });
+}
+
+export function useSchedules(enabled = true) {
+  return useQuery({ queryKey: ['directory', 'schedules'], queryFn: ({ signal }) => fetchSchedules(signal), enabled, ...DIRECTORY });
+}
+
+export function useEscalations(teamIds: readonly string[], enabled = true) {
+  return useQuery({
+    queryKey: ['directory', 'escalations', [...teamIds].sort().join(',')],
+    queryFn: async ({ signal }) => {
+      const lists = await Promise.all(teamIds.map((teamId) => fetchEscalations(teamId, signal).catch(() => [])));
+      const byId = new Map(lists.flat().map((e) => [e.id, e]));
+      return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+    },
+    enabled: enabled && teamIds.length > 0,
+    ...DIRECTORY,
   });
 }

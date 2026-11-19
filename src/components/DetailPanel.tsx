@@ -1,10 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Check, Copy, ExternalLink, X } from 'lucide-react';
 import type { Alert, AlertDetail } from '../../shared/types';
-import { useAlertDetail } from '../api/hooks';
+import { useAlertDetail, useMe, useWriteActions } from '../api/hooks';
 import { formatAbsolute, formatRelative } from '../lib/format';
 import { useNow } from '../lib/now';
-import { CustomerBadge, PriorityBadge, StatusBadge, TagChip } from './ui/badges';
+import { ActionFeedback, AlertActions } from './actions/AlertActions';
+import { ActivitySection, AttachmentsSection, NotesSection, TagEditor } from './actions/AlertExtras';
+import { useActionRunner } from './actions/useActionRunner';
+import { CustomerBadge, PriorityBadge, StatusBadge } from './ui/badges';
 
 interface DetailPanelProps {
   /** Row data, shown immediately while the full detail loads. Null when the alert is not in the list. */
@@ -67,6 +70,10 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
   const detailQuery = useAlertDetail(alertId, alert?.updatedAt);
   const detail: AlertDetail | undefined = detailQuery.data;
+  const allowed = useWriteActions();
+  const runner = useActionRunner(alertId);
+  // Jira returns responders as ids; the account behind the token can at least be named.
+  const me = useMe(allowed.size > 0).data;
   // Prefer the list row for fields both have: it is refreshed by every poll.
   const base: Alert | null = alert ?? detail ?? null;
 
@@ -98,6 +105,8 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
   }
 
   const responders = base.responders;
+  // With the action buttons in the same row, the link gets a shorter label.
+  const compact = allowed.size > 0;
   const properties = detail ? Object.entries(detail.extraProperties) : [];
   const loading = detailQuery.isPending;
 
@@ -112,16 +121,19 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
           {closeButton}
         </div>
         <h2 className="mt-2 break-words text-[15px] font-semibold leading-snug">{base.summary}</h2>
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-1">
           {base.url ? (
             <a
               href={base.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex h-7 items-center gap-1.5 rounded-md bg-accent px-3 text-xs font-semibold text-on-accent hover:opacity-90"
+              aria-label="Open in Jira"
+              data-tip={compact ? 'Open in Jira' : undefined}
+              data-tip-always=""
+              className="flex h-7 items-center gap-1.5 rounded-md bg-accent px-2.5 text-xs font-semibold text-on-accent hover:opacity-90"
             >
               <ExternalLink size={13} aria-hidden />
-              Open in Jira
+              {compact ? 'Jira' : 'Open in Jira'}
             </a>
           ) : (
             <button
@@ -129,13 +141,16 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
               disabled
               data-tip="Not available in demo mode"
               data-tip-always=""
-              className="flex h-7 items-center gap-1.5 rounded-md border border-line-strong px-3 text-xs font-semibold text-subtle"
+              aria-label="Open in Jira"
+              className="flex h-7 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-xs font-semibold text-subtle"
             >
               <ExternalLink size={13} aria-hidden />
-              Open in Jira
+              {compact ? 'Jira' : 'Open in Jira'}
             </button>
           )}
+          {allowed.size > 0 && <AlertActions alert={base} allowed={allowed} run={runner.run} busy={runner.busy} />}
         </div>
+        <ActionFeedback state={runner.state} onDismiss={runner.dismiss} />
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -157,7 +172,7 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
             <Field label="Assignee">{base.assignee ?? <span className="font-medium text-warn">Unassigned</span>}</Field>
             <Field label="Responders">
               {responders.length > 0 ? (
-                responders.map((r) => r.name ?? `${r.type} ${r.id.slice(0, 8)}`).join(', ')
+                responders.map((r) => r.name ?? (r.type === 'user' && r.id === me?.accountId ? me.displayName : `${r.type} ${r.id.slice(0, 8)}`)).join(', ')
               ) : (
                 <span className="text-subtle">–</span>
               )}
@@ -197,15 +212,13 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
         </Section>
 
         <Section title="Tags">
-          {(detail?.rawTags ?? base.tags).length > 0 ? (
-            <div className="flex flex-wrap gap-1">
-              {(detail?.rawTags ?? base.tags).map((tag) => (
-                <TagChip key={tag} tag={tag} />
-              ))}
-            </div>
-          ) : (
-            <span className="text-subtle">–</span>
-          )}
+          <TagEditor
+            tags={detail?.rawTags ?? base.tags}
+            canAdd={allowed.has('addTags')}
+            canRemove={allowed.has('removeTags')}
+            run={runner.run}
+            busy={runner.busy}
+          />
         </Section>
 
         <Section title="Description">
@@ -222,6 +235,8 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
           )}
           {detail?.detailError && <p className="mt-2 text-xs text-warn">{detail.detailError}</p>}
         </Section>
+
+        <NotesSection alertId={alertId} canAdd={allowed.has('addNote')} run={runner.run} busy={runner.busy} />
 
         <Section title="Additional properties">
           <dl className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-x-3">
@@ -243,6 +258,9 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
           </dl>
           {loading && <div className="skeleton mt-1 h-3 w-1/2" aria-busy="true" />}
         </Section>
+
+        <ActivitySection alertId={alertId} />
+        <AttachmentsSection alertId={alertId} />
       </div>
     </aside>
   );

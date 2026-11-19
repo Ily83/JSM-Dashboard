@@ -19,6 +19,42 @@ export const DEMO_TEAMS: ReadonlyMap<string, string> = new Map([
   ['team-servicedesk', 'Service Desk'],
 ]);
 
+/** Fictional people for the assign and responder pickers. */
+export const DEMO_USERS: ReadonlyArray<{ accountId: string; displayName: string }> = [
+  'Daniel Okafor',
+  'Elena Petrova',
+  'Marcus Oyelaran',
+  'Priya Nair',
+  'Sofia Lindqvist',
+  'Tomás Herrera',
+  'Yuki Tanaka',
+].map((displayName) => ({ accountId: `demo-user-${displayName.split(' ')[0]!.toLowerCase().normalize('NFD').replace(/[^a-z]/g, '')}`, displayName }));
+
+/** The account behind the (imaginary) API token in demo mode. */
+export const DEMO_ME = { accountId: 'demo-user-operator', displayName: 'Demo Operator' };
+
+export const DEMO_SCHEDULES = [
+  { id: 'sched-cloud-ops', name: 'Cloud Operations on-call' },
+  { id: 'sched-dba', name: 'Database on-call' },
+  { id: 'sched-network', name: 'Network on-call' },
+];
+
+export const DEMO_ESCALATIONS: Readonly<Record<string, Array<{ id: string; name: string }>>> = {
+  'team-cloud-ops': [{ id: 'esc-cloud-ops', name: 'Cloud Operations escalation' }],
+  'team-network': [{ id: 'esc-network', name: 'Network escalation' }],
+  'team-dba': [{ id: 'esc-dba', name: 'Database escalation' }],
+  'team-identity': [{ id: 'esc-identity', name: 'Identity escalation' }],
+  'team-platform': [{ id: 'esc-platform', name: 'Platform escalation' }, { id: 'esc-platform-major', name: 'Platform major incident' }],
+  'team-servicedesk': [{ id: 'esc-servicedesk', name: 'Service Desk escalation' }],
+};
+
+/** Names of every non-team responder above, for labelling responders. */
+export const DEMO_RESPONDER_NAMES: ReadonlyMap<string, string> = new Map([
+  ...[DEMO_ME, ...DEMO_USERS].map((u) => [u.accountId, u.displayName] as const),
+  ...DEMO_SCHEDULES.map((s) => [s.id, s.name] as const),
+  ...Object.values(DEMO_ESCALATIONS).flat().map((e) => [e.id, e.name] as const),
+]);
+
 interface Seed {
   min: number; // created, minutes ago
   upd?: number; // updated, minutes ago (defaults to created)

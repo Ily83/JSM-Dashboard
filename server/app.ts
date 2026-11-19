@@ -6,23 +6,48 @@ import helmet from 'helmet';
 import { DAY_MS, HISTORY_MAX_OFFSET, HISTORY_PAGE_SIZE, HISTORY_WINDOW_DAYS, historyDateLimits, parseUtcDate } from '../shared/history';
 import type { ApiError, StatusResponse } from '../shared/types';
 import type { AppConfig } from './config';
-import { JiraApiError } from './jira/client';
+import { JiraApiError, type JiraErrorKind } from './jira/client';
 import { log } from './logger';
 import type { AlertStore } from './services/alertStore';
+import { ActionRequestError, type ActionService, type AlertOperations } from './services/operations';
 
 const ALERT_ID = /^[A-Za-z0-9._-]{1,128}$/;
+const OTHER_ID = /^[A-Za-z0-9:._-]{1,128}$/;
 const VERSION = /^[a-f0-9]{1,64}$/;
+/** The only route that accepts a write. */
+const ACTION_ROUTE = /^\/alerts\/[A-Za-z0-9._-]{1,128}\/actions$/;
+/** Custom header that a page on another site cannot send without a CORS preflight, which is never granted. */
+export const ACTION_HEADER = 'x-alert-center-action';
+
+const STATUS_FOR_KIND: Record<JiraErrorKind, number> = {
+  auth: 502,
+  forbidden: 403,
+  not_found: 404,
+  validation: 422,
+  rate_limit: 503,
+  server: 502,
+  network: 502,
+  schema: 502,
+};
 
 /**
- * HTTP API consumed by the frontend. Read-only by construction: only GET
- * routes exist and every other method is rejected.
+ * HTTP API consumed by the frontend.
  *
- *   GET /api/status        mode, limits, extraction rules, sync state
- *   GET /api/alerts        alert list (?known=<version> &refresh=1)
- *   GET /api/alerts/:id    one alert with description and extra properties
- *   GET /api/history      one page of alerts within a UTC date window
+ *   GET  /api/status                         mode, limits, extraction rules, sync state, write capabilities
+ *   GET  /api/alerts                         alert list (?known=<version> &refresh=1)
+ *   GET  /api/alerts/:id                     one alert with description and extra properties
+ *   GET  /api/alerts/:id/notes               notes
+ *   GET  /api/alerts/:id/logs                activity log
+ *   GET  /api/alerts/:id/attachments         attachment list
+ *   GET  /api/alerts/:id/attachments/:aid    temporary download link
+ *   GET  /api/directory/me | users?query= | teams | schedules | teams/:teamId/escalations
+ *   GET  /api/history                        one page of alerts within a UTC date window
+ *   POST /api/alerts/:id/actions             one write action (only when enabled)
+ *
+ * Every other method and path is rejected. Writes additionally need a JSON
+ * body and the ACTION_HEADER, and are refused from other origins.
  */
-export function createApp(config: AppConfig, store: AlertStore) {
+export function createApp(config: AppConfig, store: AlertStore, operations: AlertOperations, actions: ActionService) {
   const app = express();
   app.disable('x-powered-by');
   app.use(
@@ -49,9 +74,11 @@ export function createApp(config: AppConfig, store: AlertStore) {
 
   const api = express.Router();
   api.use((req, res, next) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.setHeader('Allow', 'GET, HEAD');
-      res.status(405).json({ error: 'This application is read-only.' } satisfies ApiError);
+    const read = req.method === 'GET' || req.method === 'HEAD';
+    const write = req.method === 'POST' && ACTION_ROUTE.test(req.path);
+    if (!read && !write) {
+      res.setHeader('Allow', ACTION_ROUTE.test(req.path) ? 'POST' : 'GET, HEAD');
+      res.status(405).json({ error: 'Method not allowed.' } satisfies ApiError);
       return;
     }
     res.setHeader('Cache-Control', 'no-store');
@@ -61,7 +88,8 @@ export function createApp(config: AppConfig, store: AlertStore) {
   api.get('/status', (_req, res) => {
     const body: StatusResponse = {
       mode: config.mode,
-      readOnly: true,
+      readOnly: !actions.enabled,
+      writes: { enabled: actions.enabled, actions: config.writeActions },
       site: config.jira?.siteHost ?? null,
       defaultRefreshSeconds: config.defaultRefreshSeconds,
       cacheTtlSeconds: config.cacheTtlSeconds,
@@ -102,6 +130,112 @@ export function createApp(config: AppConfig, store: AlertStore) {
     }
     res.json(detail);
   });
+
+  // ---- Notes, activity log, attachments ---------------------------------
+  const alertId = (req: Request, res: Response): string | null => {
+    const id = String(req.params.id);
+    if (ALERT_ID.test(id)) return id;
+    res.status(400).json({ error: 'Invalid alert id.' } satisfies ApiError);
+    return null;
+  };
+
+  api.get('/alerts/:id/notes', async (req, res) => {
+    const id = alertId(req, res);
+    if (id) res.json(await operations.notes(id));
+  });
+
+  api.get('/alerts/:id/logs', async (req, res) => {
+    const id = alertId(req, res);
+    if (id) res.json(await operations.logs(id));
+  });
+
+  api.get('/alerts/:id/attachments', async (req, res) => {
+    const id = alertId(req, res);
+    if (id) res.json(await operations.attachments(id));
+  });
+
+  api.get('/alerts/:id/attachments/:attachmentId', async (req, res) => {
+    const id = alertId(req, res);
+    if (!id) return;
+    const attachmentId = String(req.params.attachmentId);
+    if (!OTHER_ID.test(attachmentId)) {
+      res.status(400).json({ error: 'Invalid attachment id.' } satisfies ApiError);
+      return;
+    }
+    const url = await operations.attachmentUrl(id, attachmentId);
+    if (!url) {
+      res.status(404).json({ error: 'No download available.' } satisfies ApiError);
+      return;
+    }
+    res.json({ url });
+  });
+
+  // ---- Directory for the pickers ------------------------------------------
+  api.get('/directory/me', async (_req, res) => {
+    res.json(await operations.me());
+  });
+
+  api.get('/directory/users', async (req, res) => {
+    const query = typeof req.query.query === 'string' ? req.query.query.trim() : '';
+    if (query.length < 2 || query.length > 100) {
+      res.status(400).json({ error: 'Type at least two characters.' } satisfies ApiError);
+      return;
+    }
+    res.json(await operations.searchUsers(query));
+  });
+
+  api.get('/directory/teams', async (_req, res) => {
+    res.json(await operations.teams());
+  });
+
+  api.get('/directory/schedules', async (_req, res) => {
+    res.json(await operations.schedules());
+  });
+
+  api.get('/directory/teams/:teamId/escalations', async (req, res) => {
+    const teamId = String(req.params.teamId);
+    if (!OTHER_ID.test(teamId)) {
+      res.status(400).json({ error: 'Invalid team id.' } satisfies ApiError);
+      return;
+    }
+    res.json(await operations.escalations(teamId));
+  });
+
+  // ---- Write actions ----------------------------------------------------
+  const allowedOrigin = (origin: string): boolean => {
+    try {
+      const url = new URL(origin);
+      return (url.protocol === 'http:' || url.protocol === 'https:') && allowedHosts.has(url.hostname.toLowerCase());
+    } catch {
+      return false;
+    }
+  };
+
+  api.post(
+    '/alerts/:id/actions',
+    (req, res, next) => {
+      // Cross-site request forgery: a JSON body and a custom header force a
+      // CORS preflight, which this server never answers with permission.
+      // Origin and Sec-Fetch-Site are checked as a second line of defence.
+      const origin = req.get('origin');
+      const site = req.get('sec-fetch-site');
+      if (req.get(ACTION_HEADER) !== '1' || (origin !== undefined && !allowedOrigin(origin)) || site === 'cross-site') {
+        res.status(403).json({ error: 'Request refused.' } satisfies ApiError);
+        return;
+      }
+      if (!req.is('application/json')) {
+        res.status(415).json({ error: 'Send the action as JSON.' } satisfies ApiError);
+        return;
+      }
+      next();
+    },
+    express.json({ limit: '128kb', strict: true }),
+    async (req, res) => {
+      const id = alertId(req, res);
+      if (!id) return;
+      res.json(await actions.run(id, req.body));
+    },
+  );
 
   api.get('/history', async (req, res) => {
     const from = parseUtcDate(req.query.from);
@@ -146,9 +280,20 @@ export function createApp(config: AppConfig, store: AlertStore) {
 
   app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
     if (error instanceof JiraApiError) {
-      const status = error.kind === 'rate_limit' ? 503 : 502;
-      res.status(status).json({ error: error.publicMessage } satisfies ApiError);
+      res.status(STATUS_FOR_KIND[error.kind]).json({ error: error.publicMessage } satisfies ApiError);
       return;
+    }
+    if (error instanceof ActionRequestError) {
+      res.status(error.status).json({ error: error.message } satisfies ApiError);
+      return;
+    }
+    // Malformed or oversized JSON body (express.json).
+    const status = typeof error === 'object' && error !== null && 'type' in error && 'status' in error ? error.status : null;
+    if (typeof status === 'number') {
+      if (status >= 400 && status < 500) {
+        res.status(status).json({ error: status === 413 ? 'The request is too large.' : 'The request body is not valid JSON.' } satisfies ApiError);
+        return;
+      }
     }
     // Error name and route only: messages could carry upstream data.
     log.error('request failed', { route: req.route?.path ?? 'unknown', name: error instanceof Error ? error.name : 'unknown' });

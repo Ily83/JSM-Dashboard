@@ -191,10 +191,13 @@ export class JiraSource implements AlertSource {
       .slice(0, this.config.enrichMaxPerSync);
     if (candidates.length === 0) return;
 
+    // Two at a time: enrichment is background work and must leave room in
+    // Jira's rate limit for the list requests and for user actions.
     let stop = false;
-    await Promise.all(
-      candidates.map(async (alert) => {
-        if (stop) return;
+    let next = 0;
+    const worker = async () => {
+      while (!stop && next < candidates.length) {
+        const alert = candidates[next++]!;
         try {
           const detail = await this.loadDetail(alert.id);
           if (detail) alerts.set(detail.id, detail);
@@ -202,8 +205,9 @@ export class JiraSource implements AlertSource {
           // Back off for this run as soon as Jira pushes back.
           if (error instanceof JiraApiError && error.kind !== 'not_found') stop = true;
         }
-      }),
-    );
+      }
+    };
+    await Promise.all([worker(), worker()]);
   }
 
   /** Reads every page of a query, up to `limit` alerts. */

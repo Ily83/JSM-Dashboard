@@ -1,9 +1,12 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
-import { Rows2, Rows3, Rows4, SearchX, TriangleAlert } from 'lucide-react';
+import { Layers, Rows2, Rows3, Rows4, SearchX, TriangleAlert } from 'lucide-react';
+import { BULK_ACTION_IDS } from '../shared/actions';
 import type { Alert } from '../shared/types';
 import { ApiRequestError } from './api/client';
-import { useAlerts, useStatus } from './api/hooks';
+import { useAlerts, useStatus, useWriteActions } from './api/hooks';
+import { BulkActionBar } from './components/actions/BulkActions';
+import { CustomerScope } from './components/CustomerScope';
 import { Dashboard } from './components/dashboard/Dashboard';
 import type { WidgetActions } from './components/dashboard/widgets';
 import { DetailPanel } from './components/DetailPanel';
@@ -19,7 +22,9 @@ import { TooltipLayer } from './components/ui/TooltipLayer';
 import { ViewsMenu } from './components/ViewsMenu';
 import { QUICK_FILTERS, type QuickFilterContext, type QuickFilterId } from './config/quickFilters';
 import { SECTIONS, SECTION_IDS, inSection, type SectionId } from './config/sections';
+import { cn } from './lib/cn';
 import { formatClock } from './lib/format';
+import { customerOptions, scopeAlerts } from './lib/customerScope';
 import { buildFacets, filterAlerts } from './lib/filterEngine';
 import { navigate, useRoute } from './lib/router';
 import { computeStats } from './lib/stats';
@@ -56,8 +61,13 @@ export function App() {
   const refreshSeconds = prefs.refreshSeconds ?? status.data?.defaultRefreshSeconds ?? 60;
   const onHistory = route.page === 'history';
   const alertsQuery = useAlerts(refreshSeconds, !onHistory);
-  const alerts = alertsQuery.data?.alerts ?? NO_ALERTS;
+  const loadedAlerts = alertsQuery.data?.alerts ?? NO_ALERTS;
   const meta = alertsQuery.data?.meta;
+  // Customer scope: limits KPIs, widgets, section and quick-filter counts and
+  // the table together. Kept out of the views, so it never modifies one.
+  const customerScope = prefs.customerScope;
+  const alerts = useMemo(() => scopeAlerts(loadedAlerts, customerScope), [loadedAlerts, customerScope]);
+  const scopeOptions = useMemo(() => customerOptions(loadedAlerts, customerScope), [loadedAlerts, customerScope]);
 
   const section = SECTIONS[route.section];
   const view = views.current;
@@ -88,9 +98,18 @@ export function App() {
     return { sectionCounts, quickCounts, sectionTotal: sectionCounts[section.id] };
   }, [alerts, section, profile]);
 
+  // ---- Selection for bulk actions ---------------------------------------
+  const writeActions = useWriteActions();
+  const bulkEnabled = BULK_ACTION_IDS.some((id) => writeActions.has(id));
+  const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
+  // Only alerts that are still listed count; leaving the section clears it.
+  useEffect(() => setChecked(new Set()), [route.section, route.page]);
+  const checkedAlerts = useMemo(() => (checked.size === 0 ? NO_ALERTS : visible.filter((a) => checked.has(a.id))), [visible, checked]);
+  const clearChecked = useCallback(() => setChecked(new Set()), []);
+
   const selectedAlert = useMemo(
-    () => (route.alertId ? (alerts.find((a) => a.id === route.alertId) ?? null) : null),
-    [alerts, route.alertId],
+    () => (route.alertId ? (loadedAlerts.find((a) => a.id === route.alertId) ?? null) : null),
+    [loadedAlerts, route.alertId],
   );
 
   const selectAlert = useCallback((id: string) => navigate({ alertId: id }, { replace: true }), []);
@@ -137,7 +156,7 @@ export function App() {
         ))}
       </div>
     );
-  } else if (alerts.length === 0 && requestError) {
+  } else if (loadedAlerts.length === 0 && requestError) {
     emptyState = (
       <div className="max-w-md text-center">
         <TriangleAlert size={28} aria-hidden className="mx-auto text-crit" />
@@ -158,10 +177,14 @@ export function App() {
           <a href="#/settings" className="mt-2 inline-block text-xs font-medium text-accent hover:underline">
             Choose your customers in Settings
           </a>
+        ) : sectionTotal > 0 ? (
+          <button type="button" onClick={clearAllFilters} className="mt-2 text-xs font-medium text-accent hover:underline">
+            Clear all filters
+          </button>
         ) : (
-          sectionTotal > 0 && (
-            <button type="button" onClick={clearAllFilters} className="mt-2 text-xs font-medium text-accent hover:underline">
-              Clear all filters
+          customerScope.length > 0 && (
+            <button type="button" onClick={() => patchPrefs({ customerScope: [] })} className="mt-2 text-xs font-medium text-accent hover:underline">
+              Show all customers
             </button>
           )
         )}
@@ -171,7 +194,7 @@ export function App() {
 
   const staleNotice = meta?.stale
     ? `${meta.error ?? 'Synchronisation failed.'}${meta.lastSyncAt ? ` Showing data from ${formatClock(meta.lastSyncAt)}.` : ''}`
-    : alerts.length > 0 && requestError
+    : loadedAlerts.length > 0 && requestError
       ? requestError
       : null;
 
@@ -200,6 +223,11 @@ export function App() {
           theme={prefs.theme}
           onThemeChange={(theme) => patchPrefs({ theme })}
           showLiveControls={!onHistory}
+          scope={
+            route.page === 'alerts' ? (
+              <CustomerScope options={scopeOptions} scope={customerScope} myCustomers={prefs.profile.customers} onChange={(next) => patchPrefs({ customerScope: next })} />
+            ) : undefined
+          }
           dashboard={
             route.page === 'alerts'
               ? {
@@ -232,7 +260,7 @@ export function App() {
           <SettingsView
             status={status.data}
             assignees={facets.assignee.map((o) => o.value).filter(Boolean)}
-            customers={facets.customer.map((o) => o.value).filter(Boolean)}
+            customers={scopeOptions.filter((o) => o.total > 0).map((o) => o.name)}
           />
         ) : onHistory ? (
           <HistoryView />
@@ -271,8 +299,23 @@ export function App() {
                   >
                     <DensityIcon size={15} aria-hidden />
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => patchPrefs({ groupRepeats: !prefs.groupRepeats })}
+                    aria-pressed={prefs.groupRepeats}
+                    aria-label="Group repeats"
+                    data-tip={prefs.groupRepeats ? 'Grouping repeats' : 'Group repeats'}
+                    data-tip-always=""
+                    className={cn(
+                      'flex size-7 items-center justify-center rounded-md border hover:bg-hover hover:text-fg',
+                      prefs.groupRepeats ? 'border-accent bg-accent-soft text-accent' : 'border-line-strong bg-panel text-muted',
+                    )}
+                  >
+                    <Layers size={15} aria-hidden />
+                  </button>
                   <ColumnsMenu />
                 </FilterBar>
+                {bulkEnabled && <BulkActionBar selected={checkedAlerts} allowed={writeActions} onClear={clearChecked} />}
                 <AlertTable
                   alerts={visible}
                   selectedId={route.alertId}
@@ -284,6 +327,9 @@ export function App() {
                   cellOptions={cellOptions}
                   highlightCritical={prefs.highlightCritical}
                   emptyState={emptyState}
+                  selection={bulkEnabled ? checked : undefined}
+                  onSelectionChange={bulkEnabled ? setChecked : undefined}
+                  groupRepeats={prefs.groupRepeats}
                 />
               </div>
             </main>

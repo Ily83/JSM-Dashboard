@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ACTION_IDS, type ActionId } from '../shared/actions';
 import type { ExtractionRules } from '../shared/types';
 
 /**
@@ -75,6 +76,7 @@ const EnvSchema = z.object({
   JIRA_REQUEST_TIMEOUT_MS: int(15_000, 1000, 120_000),
   JIRA_ENRICH_DETAILS: text.pipe(z.enum(['auto', 'always', 'never']).optional()),
   JIRA_ENRICH_MAX_PER_SYNC: int(50, 0, 1000),
+  JIRA_WRITE_ACTIONS: text,
 
   REFRESH_INTERVAL_SECONDS: int(60, 10, 3600),
 
@@ -105,6 +107,8 @@ export interface JiraConfig {
   requestTimeoutMs: number;
   enrichDetails: 'auto' | 'always' | 'never';
   enrichMaxPerSync: number;
+  /** Write actions allowed against Jira. Empty means read-only (the default). */
+  writeActions: ActionId[];
 }
 
 export interface AppConfig {
@@ -117,11 +121,33 @@ export interface AppConfig {
   demoAlertCount: number;
   /** Present only in live mode. */
   jira: JiraConfig | null;
+  /** Write actions the API accepts: JIRA_WRITE_ACTIONS in live mode, all of them on demo data. */
+  writeActions: ActionId[];
   cacheTtlSeconds: number;
   defaultRefreshSeconds: number;
   extraction: ExtractionRules;
   /** Non-fatal configuration problems, shown in Settings. Never contain secrets. */
   warnings: string[];
+}
+
+/**
+ * JIRA_WRITE_ACTIONS: empty, "false", "off" or "none" = read-only (default);
+ * "true", "on" or "all" = every action; otherwise a comma-separated list of
+ * action ids, e.g. "acknowledge,unacknowledge,addNote".
+ */
+export function parseWriteActions(raw: string | undefined): { actions: ActionId[]; unknown: string[] } {
+  const value = (raw ?? '').trim().toLowerCase();
+  if (value === '' || /^(0|false|no|off|none)$/.test(value)) return { actions: [], unknown: [] };
+  if (/^(1|true|yes|on|all)$/.test(value)) return { actions: [...ACTION_IDS], unknown: [] };
+  const byLower = new Map(ACTION_IDS.map((id) => [id.toLowerCase(), id]));
+  const actions = new Set<ActionId>();
+  const unknown: string[] = [];
+  for (const part of value.split(',').map((p) => p.trim()).filter(Boolean)) {
+    const id = byLower.get(part);
+    if (id) actions.add(id);
+    else unknown.push(part);
+  }
+  return { actions: ACTION_IDS.filter((id) => actions.has(id)), unknown };
 }
 
 function normaliseSiteUrl(raw: string): { siteUrl: string; siteHost: string } | null {
@@ -154,6 +180,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     .filter(([, v]) => v === undefined)
     .map(([k]) => k);
 
+  const writes = parseWriteActions(e.JIRA_WRITE_ACTIONS);
+  if (writes.unknown.length > 0) {
+    // The names come from the variable itself, not from a secret.
+    warnings.push(`JIRA_WRITE_ACTIONS contains unknown actions (${writes.unknown.join(', ')}). They are ignored.`);
+  }
+
   let jira: JiraConfig | null = null;
   if (!demoForced && missing.length === 0) {
     const site = normaliseSiteUrl(e.JIRA_SITE_URL!);
@@ -176,6 +208,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         requestTimeoutMs: e.JIRA_REQUEST_TIMEOUT_MS,
         enrichDetails: e.JIRA_ENRICH_DETAILS ?? 'auto',
         enrichMaxPerSync: e.JIRA_ENRICH_MAX_PER_SYNC,
+        writeActions: writes.actions,
       };
     }
   } else if (!demoForced && missing.length < 3) {
@@ -194,6 +227,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     mode: jira ? 'live' : 'demo',
     demoAlertCount: e.DEMO_ALERT_COUNT,
     jira,
+    // Demo data lives in memory only, so every action can be tried there.
+    writeActions: jira ? jira.writeActions : [...ACTION_IDS],
     cacheTtlSeconds: e.JIRA_CACHE_TTL_SECONDS,
     defaultRefreshSeconds: e.REFRESH_INTERVAL_SECONDS,
     extraction: {

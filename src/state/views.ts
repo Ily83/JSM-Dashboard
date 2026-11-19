@@ -137,6 +137,18 @@ function sanitizeLayout(stored: unknown): ViewLayout | null {
   };
 }
 
+/** One saved view, as stored or imported. Null when it has no id. */
+export function sanitizeSavedView(item: unknown): SavedView | null {
+  if (!isRecord(item) || typeof item.id !== 'string' || item.id === '') return null;
+  return {
+    id: item.id,
+    name: typeof item.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 80) : 'Untitled view',
+    section: isSectionId(item.section) ? item.section : 'all',
+    state: sanitizeState(item.state),
+    layout: sanitizeLayout(item.layout),
+  };
+}
+
 export const viewsStore = createPersistentStore<ViewsData>(
   'views:v1',
   () => ({ current: EMPTY_VIEW_STATE(), activeViewId: null, saved: STARTER_VIEWS(), defaultViewId: null }),
@@ -145,15 +157,10 @@ export const viewsStore = createPersistentStore<ViewsData>(
     const ids = new Set<string>();
     const saved: SavedView[] = [];
     for (const item of Array.isArray(stored.saved) ? stored.saved : []) {
-      if (!isRecord(item) || typeof item.id !== 'string' || ids.has(item.id)) continue;
-      ids.add(item.id);
-      saved.push({
-        id: item.id,
-        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 80) : 'Untitled view',
-        section: isSectionId(item.section) ? item.section : 'all',
-        state: sanitizeState(item.state),
-        layout: sanitizeLayout(item.layout),
-      });
+      const view = sanitizeSavedView(item);
+      if (!view || ids.has(view.id)) continue;
+      ids.add(view.id);
+      saved.push(view);
     }
     const known = (id: unknown): string | null => (typeof id === 'string' && ids.has(id) ? id : null);
     return {
@@ -199,11 +206,11 @@ export function isViewModified(view: SavedView, section: SectionId, current: Vie
 
 // ---- Saved views ------------------------------------------------------------
 
-function newId(): string {
+export function newId(): string {
   return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `view-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function uniqueName(name: string, saved: SavedView[], ignoreId?: string): string {
+export function uniqueName(name: string, saved: readonly SavedView[], ignoreId?: string): string {
   const base = name.trim().slice(0, 80) || 'Untitled view';
   const taken = new Set(saved.filter((v) => v.id !== ignoreId).map((v) => v.name.toLowerCase()));
   if (!taken.has(base.toLowerCase())) return base;

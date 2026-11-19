@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, FlaskConical, LayoutGrid, LoaderCircle, Moon, RefreshCw, Sun } from 'lucide-react';
 import type { SyncMeta } from '../../shared/types';
 import { cn } from '../lib/cn';
@@ -18,6 +19,8 @@ interface TopBarProps {
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
   showLiveControls?: boolean;
+  /** Customer scope control, on the alert pages only. */
+  scope?: ReactNode;
   /** Dashboard controls, absent on the settings page. */
   dashboard?: { collapsed: boolean; editing: boolean; onToggleCollapsed: () => void; onToggleEditing: () => void };
 }
@@ -89,6 +92,8 @@ export function TopBar(props: TopBarProps) {
           Demo mode
         </span>
       )}
+
+      {props.scope}
 
       <div className="ml-auto flex flex-none items-center gap-1.5">
         {props.showLiveControls !== false && (

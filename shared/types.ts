@@ -5,6 +5,8 @@
  * shape, so the UI never depends on the raw Jira response.
  */
 
+import type { WriteCapabilities } from './actions';
+
 export const PRIORITIES = ['P1', 'P2', 'P3', 'P4', 'P5'] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
@@ -129,7 +131,10 @@ export interface ExtractionRules {
 
 export interface StatusResponse {
   mode: AppMode;
-  readOnly: true;
+  /** True when no write action is enabled. */
+  readOnly: boolean;
+  /** Write actions the configuration allows (JIRA_WRITE_ACTIONS; always all in demo mode). */
+  writes: WriteCapabilities;
   /** Jira site host name, live mode only. Never includes credentials. */
   site: string | null;
   defaultRefreshSeconds: number;

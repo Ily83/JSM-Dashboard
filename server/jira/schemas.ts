@@ -61,3 +61,67 @@ export const ListTeamsResponseSchema = z.array(
 );
 
 export const TenantInfoSchema = z.looseObject({ cloudId: z.string().min(1) });
+
+// ---- Write actions and the read-only extras around them -----------------
+// Schemas SuccessResponse, AlertNote, AlertLog, AlertAttachmentDto,
+// EscalationResponse and Schedule of the same OpenAPI document; users come
+// from the Jira platform REST API v3 (User).
+
+/** 202 answer of every asynchronous action. */
+export const AcceptedResponseSchema = z.looseObject({
+  result: z.string().nullish(),
+  requestId: z.string().nullish(),
+});
+
+/** GET /v1/alerts/requests/{id} */
+export const RequestStatusSchema = z.looseObject({
+  action: z.string().nullish(),
+  processedAt: z.string().nullish(),
+  isSuccess: z.boolean().nullish(),
+  status: z.string().nullish(),
+  alertId: z.string().nullish(),
+});
+
+const NextLinkSchema = z.looseObject({ next: z.string().nullish() }).nullish();
+
+export const NoteSchema = z.looseObject({
+  id: z.union([z.string(), z.number()]).transform(String),
+  createdAt: z.string().nullish(),
+  note: z.string().nullish(),
+  owner: z.string().nullish(),
+});
+export const NotesPageSchema = z.looseObject({ values: z.array(z.unknown()).nullish(), links: NextLinkSchema });
+
+export const LogSchema = z.looseObject({
+  logTime: z.string().nullish(),
+  logType: z.string().nullish(),
+  log: z.string().nullish(),
+  owner: z.string().nullish(),
+});
+export const LogsPageSchema = z.looseObject({ values: z.array(z.unknown()).nullish(), links: NextLinkSchema });
+
+// The OpenAPI document names the fields attachmentName and insertedAt; the
+// live API (checked 2026-11-19) returns name and createdAt. Both are read.
+export const AttachmentSchema = z.looseObject({
+  id: z.union([z.string(), z.number()]).transform(String),
+  attachmentName: z.string().nullish(),
+  name: z.string().nullish(),
+  insertedAt: z.string().nullish(),
+  createdAt: z.string().nullish(),
+});
+export const AttachmentsPageSchema = z.looseObject({ values: z.array(z.unknown()).nullish(), links: NextLinkSchema });
+export const AttachmentUrlSchema = z.looseObject({ url: z.url({ protocol: /^https$/ }) });
+
+const NamedSchema = z.looseObject({ id: z.string().min(1), name: z.string().nullish(), enabled: z.boolean().nullish() });
+export const SchedulesPageSchema = z.looseObject({ values: z.array(z.unknown()).nullish(), links: NextLinkSchema });
+export const EscalationsPageSchema = z.looseObject({ values: z.array(z.unknown()).nullish(), links: NextLinkSchema });
+export { NamedSchema };
+
+/** Jira platform: GET /rest/api/3/user/search and GET /rest/api/3/myself */
+export const PlatformUserSchema = z.looseObject({
+  accountId: z.string().min(1),
+  accountType: z.string().nullish(),
+  displayName: z.string().nullish(),
+  active: z.boolean().nullish(),
+});
+export const PlatformUsersSchema = z.array(z.unknown());

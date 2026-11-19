@@ -23,8 +23,10 @@ function parse(hash: string): Route {
   };
 }
 
-let cached: Route = parse(window.location.hash);
-let cachedHash = window.location.hash;
+// Guarded so modules that import the router can also be loaded by unit tests.
+const initialHash = typeof window === 'undefined' ? '' : window.location.hash;
+let cached: Route = parse(initialHash);
+let cachedHash = initialHash;
 
 function snapshot(): Route {
   if (window.location.hash !== cachedHash) {

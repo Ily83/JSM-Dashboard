@@ -18,7 +18,8 @@ export interface SourceSnapshot {
 
 /**
  * Where alerts come from. Two implementations: DemoSource (sample data) and
- * JiraSource (Jira Service Management Operations API). Both are read-only.
+ * JiraSource (Jira Service Management Operations API). Writes go through
+ * AlertOperations (server/services/operations.ts), not through this interface.
  */
 export interface AlertSource {
   readonly mode: AppMode;
