@@ -63,7 +63,9 @@ function toBase64Url(text: string): string {
   const bytes = new TextEncoder().encode(text);
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  let encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_');
+  while (encoded.endsWith('=')) encoded = encoded.slice(0, -1);
+  return encoded;
 }
 
 function fromBase64Url(value: string): string | null {

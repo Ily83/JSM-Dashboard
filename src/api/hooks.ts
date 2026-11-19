@@ -184,7 +184,7 @@ export function useSchedules(enabled = true) {
 
 export function useEscalations(teamIds: readonly string[], enabled = true) {
   return useQuery({
-    queryKey: ['directory', 'escalations', [...teamIds].sort().join(',')],
+    queryKey: ['directory', 'escalations', [...teamIds].sort((a, b) => a.localeCompare(b)).join(',')],
     queryFn: async ({ signal }) => {
       const lists = await Promise.all(teamIds.map((teamId) => fetchEscalations(teamId, signal).catch(() => [])));
       const byId = new Map(lists.flat().map((e) => [e.id, e]));

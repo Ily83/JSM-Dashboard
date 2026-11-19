@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode, type MouseEvent } from 'react';
 import { getCoreRowModel, getSortedRowModel, useReactTable, type Header, type SortingState, type Updater } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, ChevronRight, Copy } from 'lucide-react';
@@ -274,6 +274,12 @@ export const AlertTable = memo(function AlertTable({
     }
   };
 
+  // Each row gets the same keyboard handling, through one stable function so
+  // the memoised rows do not re-render when the handler's closure changes.
+  const keyHandler = useRef(onBodyKeyDown);
+  keyHandler.current = onBodyKeyDown;
+  const onRowKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => keyHandler.current(event), []);
+
   // ---- Column reordering by dragging a header --------------------------
   const [drag, setDrag] = useState<{ from: ColumnId; over: ColumnId | null; side: 'before' | 'after' } | null>(null);
 
@@ -359,7 +365,6 @@ export const AlertTable = memo(function AlertTable({
           role="rowgroup"
           className="relative"
           style={{ height: virtualizer.getTotalSize(), width: 'var(--table-width)', minWidth: '100%' }}
-          onKeyDown={onBodyKeyDown}
         >
           {virtualRows.map((virtual) => {
             const item = items[virtual.index]!;
@@ -371,6 +376,7 @@ export const AlertTable = memo(function AlertTable({
               columns: rowColumns,
               options: cellOptions,
               onCheck: selectable ? onCheck : undefined,
+              onKeyDown: onRowKeyDown,
             };
             const key = itemKey(item);
             if (item.kind === 'lane') {
@@ -441,7 +447,11 @@ interface RowBaseProps {
   critical: boolean;
   /** Present when the selection column is shown. */
   onCheck?: (index: number, range: boolean) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 }
+
+/** Clicks in the selection cell tick the box; they must not also open or toggle the row. */
+const inSelectCell = (event: MouseEvent<HTMLElement>) => (event.target as HTMLElement).closest('.at-select') !== null;
 
 interface RowProps extends RowBaseProps {
   alert: Alert;
@@ -455,7 +465,7 @@ interface RowProps extends RowBaseProps {
 
 function SelectCell({ index, checked, label, onCheck }: { index: number; checked: boolean | 'mixed'; label: string; onCheck: (index: number, range: boolean) => void }) {
   return (
-    <div role="gridcell" className="at-cell at-select" style={{ width: SELECT_WIDTH }} onClick={(event) => event.stopPropagation()}>
+    <div role="gridcell" className="at-cell at-select" style={{ width: SELECT_WIDTH }}>
       <input
         type="checkbox"
         tabIndex={-1}
@@ -474,7 +484,7 @@ function SelectCell({ index, checked, label, onCheck }: { index: number; checked
   );
 }
 
-const Row = memo(function Row({ alert, child, alsoIn, index, top, height, selected, checked, tabbable, columns, options, critical, onSelect, onCheck }: RowProps) {
+const Row = memo(function Row({ alert, child, alsoIn, index, top, height, selected, checked, tabbable, columns, options, critical, onSelect, onCheck, onKeyDown }: RowProps) {
   return (
     <div
       role="row"
@@ -488,7 +498,8 @@ const Row = memo(function Row({ alert, child, alsoIn, index, top, height, select
       tabIndex={tabbable ? 0 : -1}
       className="at-row"
       style={{ transform: `translateY(${top}px)`, height, width: 'var(--table-width)' }}
-      onClick={() => onSelect(alert.id, index)}
+      onClick={(event) => !inSelectCell(event) && onSelect(alert.id, index)}
+      onKeyDown={onKeyDown}
     >
       {onCheck && <SelectCell index={index} checked={checked ?? false} label={`Select alert ${alert.tinyId ? `#${alert.tinyId}` : alert.summary}`} onCheck={onCheck} />}
       {columns.map((column) => (
@@ -529,7 +540,7 @@ interface GroupRowProps extends RowBaseProps {
 }
 
 /** One row standing for a group of repeated alerts; click to expand. */
-const GroupRow = memo(function GroupRow({ itemKey: key, group, summary, expanded, checked, activityEnd, index, top, height, tabbable, columns, options, critical, onToggle, onCheck }: GroupRowProps) {
+const GroupRow = memo(function GroupRow({ itemKey: key, group, summary, expanded, checked, activityEnd, index, top, height, tabbable, columns, options, critical, onToggle, onCheck, onKeyDown }: GroupRowProps) {
   const tip = `${group.records} alert records · ${group.occurrences} occurrences\nGrouped by ${group.basis === 'alias' ? 'alias' : 'source and similar summary'}`;
   return (
     <div
@@ -543,7 +554,8 @@ const GroupRow = memo(function GroupRow({ itemKey: key, group, summary, expanded
       tabIndex={tabbable ? 0 : -1}
       className="at-row"
       style={{ transform: `translateY(${top}px)`, height, width: 'var(--table-width)' }}
-      onClick={() => onToggle(key)}
+      onClick={(event) => !inSelectCell(event) && onToggle(key)}
+      onKeyDown={onKeyDown}
     >
       {onCheck && <SelectCell index={index} checked={checked} label={`Select ${group.records} alerts in this group`} onCheck={onCheck} />}
       {columns.map((column) => (
@@ -585,7 +597,7 @@ interface LaneRowProps extends Omit<RowBaseProps, 'critical' | 'columns' | 'opti
 }
 
 /** Header of one lane: name, most urgent priority, counts. Click to collapse. */
-const LaneRow = memo(function LaneRow({ laneKey, name, isNone, laneBy, total, shared, p1, priority, collapsed, checked, index, top, height, tabbable, onToggle, onCheck }: LaneRowProps) {
+const LaneRow = memo(function LaneRow({ laneKey, name, isNone, laneBy, total, shared, p1, priority, collapsed, checked, index, top, height, tabbable, onToggle, onCheck, onKeyDown }: LaneRowProps) {
   return (
     <div
       role="row"
@@ -596,7 +608,8 @@ const LaneRow = memo(function LaneRow({ laneKey, name, isNone, laneBy, total, sh
       tabIndex={tabbable ? 0 : -1}
       className="at-row"
       style={{ transform: `translateY(${top}px)`, height, width: 'var(--table-width)' }}
-      onClick={() => onToggle(laneKey)}
+      onClick={(event) => !inSelectCell(event) && onToggle(laneKey)}
+      onKeyDown={onKeyDown}
     >
       {onCheck && <SelectCell index={index} checked={checked} label={`Select ${total} alerts in ${name}`} onCheck={onCheck} />}
       <div role="gridcell" className="at-cell sticky left-0 min-w-0 flex-1">

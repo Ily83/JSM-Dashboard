@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { z } from 'zod';
 import type { ActionResult, AlertAction, AlertAttachment, AlertLogEntry, AlertNote, DirectoryEntry, DirectoryUser, Page } from '../../shared/actions';
 import type { JiraConfig } from '../config';
@@ -583,7 +584,7 @@ export class JiraClient {
             if (this.pausedUntil - Date.now() > 10_000) throw error;
             continue;
           }
-          await sleep(500 * 2 ** (attempt - 1) + Math.random() * 250);
+          await sleep(500 * 2 ** (attempt - 1) + randomInt(250));
         }
       }
     } finally {

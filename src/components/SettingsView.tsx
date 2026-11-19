@@ -2,6 +2,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Copy, Download, Play, RotateCcw, Star, Trash2, Upload } from 'lucide-react';
 import { ACTION_IDS, ACTION_LABEL } from '../../shared/actions';
 import type { Alert, StatusResponse } from '../../shared/types';
+import { trimChar } from '../lib/id';
 import { desktopPermission, playAlarm, requestDesktopPermission, showDesktop, unlockAudio, type DesktopPermission } from '../lib/alarm';
 import { COLUMN_INFO } from '../config/columns';
 import { FILTER_FIELDS, type FilterFieldId } from '../config/filterFields';
@@ -647,7 +648,7 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
 // ---- Backup -------------------------------------------------------------------
 
 function slug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'view';
+  return trimChar(name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), '-').slice(0, 40) || 'view';
 }
 
 function downloadJson(fileName: string, value: unknown): void {

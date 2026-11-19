@@ -8,7 +8,14 @@ import { Fragment } from 'react';
 
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`]+/gi;
 // Punctuation that usually ends a sentence rather than the address.
-const TRAILING = /[.,;:!?)\]}]+$/;
+const TRAILING = new Set(['.', ',', ';', ':', '!', '?', ')', ']', '}']);
+
+/** The run of sentence punctuation at the end of `url` (a loop: no backtracking on long runs). */
+function trailingPunctuation(url: string): string {
+  let end = url.length;
+  while (end > 0 && TRAILING.has(url[end - 1])) end -= 1;
+  return url.slice(end);
+}
 
 export function splitLinks(text: string): Array<{ text: string; href?: string }> {
   const parts: Array<{ text: string; href?: string }> = [];
@@ -16,7 +23,7 @@ export function splitLinks(text: string): Array<{ text: string; href?: string }>
   for (const match of text.matchAll(URL_PATTERN)) {
     const start = match.index ?? 0;
     let url = match[0];
-    const trailing = TRAILING.exec(url)?.[0] ?? '';
+    const trailing = trailingPunctuation(url);
     // Keep a closing bracket that belongs to the address, as in wiki links.
     const keep = trailing.startsWith(')') && url.includes('(') ? '' : trailing;
     url = url.slice(0, url.length - keep.length);

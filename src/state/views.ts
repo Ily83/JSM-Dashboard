@@ -1,3 +1,4 @@
+import { randomId } from '../lib/id';
 import type { SortingState } from '@tanstack/react-table';
 import { isColumnId } from '../config/columns';
 import { NONE } from '../config/filterFields';
@@ -208,7 +209,7 @@ export function isViewModified(view: SavedView, section: SectionId, current: Vie
 // ---- Saved views ------------------------------------------------------------
 
 export function newId(): string {
-  return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `view-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return randomId('view');
 }
 
 export function uniqueName(name: string, saved: readonly SavedView[], ignoreId?: string): string {

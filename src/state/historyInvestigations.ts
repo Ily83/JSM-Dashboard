@@ -1,3 +1,4 @@
+import { randomId } from '../lib/id';
 import { parseUtcDate } from '../../shared/history';
 import {
   DEFAULT_ANALYSIS_SETTINGS,
@@ -85,9 +86,7 @@ function pick(input: InvestigationInput): InvestigationInput {
 }
 
 function newId(): string {
-  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `history-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return randomId('history');
 }
 
 /** Saves a new investigation and returns its id, or null when the input is invalid or the list is full. */

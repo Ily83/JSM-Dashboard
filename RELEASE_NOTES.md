@@ -37,6 +37,7 @@ Restart the application. Preferences saved in the browser are kept. To create an
 ### Changed
 
 - When Jira refuses a write, its reason is now shown (shortened, never logged).
+- SonarQube findings fixed: table rows handle their keys themselves, regular expressions that could backtrack on long input replaced with loops, cryptographic random numbers and SHA-256 where Math.random and SHA-1 were used, a missing sort comparison and a missing `reduce` start value. The demo data is unchanged.
 - Closed alerts get their extra properties too (up to ten per run, after the open ones), so their service and customers no longer fall back to the entity. Known properties stay visible while an alert changes.
 - In demo mode, acknowledging sets the owner and unacknowledging clears it, as Jira does.
 - The demo data has runbook links and custom actions on some alerts.
@@ -45,6 +46,7 @@ Restart the application. Preferences saved in the browser are kept. To create an
 
 - 153 unit tests.
 - `npm run e2e`: 13 browser tests in demo mode, no console errors.
+- SonarQube (Community Build 26.6): quality gate passed; 0 bugs, 0 vulnerabilities, 0 open security hotspots, 0 new issues. 365 code smells remain (mostly style; 27 functions above the complexity threshold).
 - `npm run e2e:live` against the trial site (Premium trial): 4 round-trip tests pass, including a custom action ("Executed action: Run diagnostics").
 - The simulator ran on the trial site; the heartbeat expired and Jira raised its alert, which the Heartbeats widget and the table show.
 - Also on the trial site: Escalate to next, team, schedule and escalation responders, and creating and ending a maintenance window.

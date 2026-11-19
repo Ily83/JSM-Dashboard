@@ -124,7 +124,7 @@ const STATUS_RANK: Record<AlertStatus, number> = { open: 0, acked: 1, snoozed: 2
  * customers and tags, newest times, total occurrences.
  */
 export function groupSummaryAlert(group: AlertGroup): Alert {
-  const newest = group.alerts.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
+  const newest = group.alerts.reduce((a, b) => (b.createdAt > a.createdAt ? b : a), group.alerts[0]);
   const status = group.alerts.reduce<AlertStatus>((s, a) => (STATUS_RANK[a.status] < STATUS_RANK[s] ? a.status : s), 'closed');
   const assignees = new Set(group.alerts.map((a) => a.assignee));
   return {

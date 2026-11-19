@@ -100,6 +100,18 @@ To watch realistic traffic, run **`npm run jira:simulate -- run --yes`** against
 | 6:00–11:00 | The outage is acknowledged, noted and resolved | owner, notes, activity log, Response times |
 | 8:00, 12:00 | Low-priority noise and a certificate warning | quieter rows, multi-customer alerts |
 
+### SonarQube
+
+`sonar-project.properties` describes the project (key `jsm-dashboard`). `npm run test:coverage` writes `coverage/lcov.info`, then the scanner runs in Docker with the token only in the environment:
+
+```bash
+npm run test:coverage
+SONAR_TOKEN=squ_… docker run --rm --network=host --entrypoint sonar-scanner \
+  -e SONAR_HOST_URL=http://localhost:9000 -e SONAR_TOKEN -v "$PWD:/usr/src:ro" sonarsource/sonar-scanner-cli
+```
+
+`--entrypoint sonar-scanner` keeps the token off the process list. A local `.env.sonar` (ignored by git) can hold `SONAR_TOKEN`.
+
 All simulated alerts carry the tag `alert-center-sim`; `npm run jira:simulate -- cleanup --yes` closes them and removes the heartbeat. The site needs at least one Operations team for the responders and the heartbeat.
 
 Alerts sent this way come through the Operations REST API and carry no integration name, so the maintenance badge (matched by integration name) cannot mark them. Alerts from a real integration (for example an Azure Monitor action group or the JSM "API" integration with its own key) would.

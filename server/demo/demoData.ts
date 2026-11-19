@@ -338,9 +338,11 @@ function fromSeed(seed: Seed, index: number, now: number): RawAlert {
 
 /** Small deterministic generator, so a large demo set is identical on every start. */
 function mulberry32(seed: number): () => number {
-  let state = seed;
+  // A 32-bit signed integer that wraps on overflow, as the algorithm requires.
+  const cell = new Int32Array([seed]);
   return () => {
-    state = (state + 0x6d2b79f5) | 0;
+    cell[0] += 0x6d2b79f5;
+    const state = cell[0];
     let t = Math.imul(state ^ (state >>> 15), 1 | state);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;

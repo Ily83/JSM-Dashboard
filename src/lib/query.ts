@@ -1,3 +1,4 @@
+import { trimChar } from './id';
 import { PRIORITIES, type Alert, type Priority } from '../../shared/types';
 import { NONE, SET_FIELDS, STATUS_LABEL, teamsOf, TEXT_FIELDS, type SetField } from '../config/filterFields';
 
@@ -243,7 +244,7 @@ const PRIORITY_RANK = Object.fromEntries(PRIORITIES.map((p, i) => [p, i])) as Re
 function wildcard(pattern: string): (value: string) => boolean {
   if (!pattern.includes('*')) return (value) => value === pattern;
   // Common shapes without a regular expression: text*, *text, *text*.
-  const inner = pattern.replace(/^\*+|\*+$/g, '');
+  const inner = trimChar(pattern, '*');
   if (!inner.includes('*')) {
     const starts = !pattern.startsWith('*');
     const ends = !pattern.endsWith('*');
