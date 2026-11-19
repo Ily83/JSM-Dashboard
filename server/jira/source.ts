@@ -1,0 +1,275 @@
+import type { AlertDetail, ExtractionRules } from '../../shared/types';
+import type { JiraConfig } from '../config';
+import { log } from '../logger';
+import type { AlertSource, SourceSnapshot } from '../services/source';
+import { JiraApiError, JiraClient, MAX_OFFSET_PLUS_SIZE, MAX_PAGE_SIZE } from './client';
+import { mapAlert, type MapContext } from './mapper';
+import type { RawAlert } from './schemas';
+
+/**
+ * Synchronises alerts from Jira with as few requests as possible.
+ *
+ * The list endpoint has no "changed since" filter (the documented search
+ * fields include createdAt and lastOccurredAt but not updatedAt), so true
+ * delta queries are not possible. Instead there are two kinds of run:
+ *
+ *   Full sync   (first run, then every JIRA_FULL_SYNC_MINUTES)
+ *     - all open alerts (JIRA_OPEN_QUERY), newest first, up to JIRA_MAX_ALERTS
+ *     - closed alerts (JIRA_CLOSED_QUERY) created within the lookback window
+ *     - team names, to label responders
+ *
+ *   Light sync  (every other run)
+ *     - open alerts only
+ *     - alerts that were open last time and are missing now are fetched one
+ *       by one (Get alert) to learn their new state
+ *     - closed alerts are carried over from the cache
+ *
+ * Per-alert detail (description, extra properties) is cached by alert id and
+ * `updatedAt`, so an unchanged alert is never fetched twice.
+ */
+
+const MAX_DISAPPEARED_LOOKUPS = 40;
+
+interface CachedDetail {
+  updatedAt: string | null | undefined;
+  description: RawAlert['description'];
+  extraProperties: RawAlert['extraProperties'];
+  actions: RawAlert['actions'];
+}
+
+interface FetchResult {
+  raws: RawAlert[];
+  total: number | null;
+  skipped: number;
+}
+
+export class JiraSource implements AlertSource {
+  readonly mode = 'live' as const;
+  private lastFullAt = 0;
+  private teamNames: Map<string, string> = new Map();
+  private readonly details = new Map<string, CachedDetail>();
+  private readonly ctx: MapContext;
+
+  constructor(
+    private readonly config: JiraConfig,
+    rules: ExtractionRules,
+    private readonly client: JiraClient = new JiraClient(config),
+  ) {
+    const template = config.alertUrlTemplate;
+    this.ctx = {
+      rules,
+      teamNames: this.teamNames,
+      alertUrl: (id) =>
+        template.replaceAll('{siteUrl}', config.siteUrl).replaceAll('{id}', encodeURIComponent(id)),
+    };
+  }
+
+  async sync(previous: SourceSnapshot | null): Promise<SourceSnapshot> {
+    const now = Date.now();
+    const full = !previous || now - this.lastFullAt >= this.config.fullSyncMinutes * 60_000;
+    const requestsBefore = this.client.requestCount;
+
+    const snapshot = full ? await this.fullSync(previous, now) : await this.lightSync(previous, now);
+    await this.enrich(snapshot.alerts);
+
+    if (full) this.lastFullAt = now;
+    this.pruneDetailCache(snapshot.alerts);
+    log.info('jira sync complete', {
+      kind: full ? 'full' : 'light',
+      alerts: snapshot.alerts.size,
+      requests: this.client.requestCount - requestsBefore,
+      skipped: snapshot.skipped,
+    });
+    return snapshot;
+  }
+
+  async loadDetail(id: string): Promise<AlertDetail | null> {
+    try {
+      const raw = await this.client.getAlert(id);
+      this.rememberDetail(raw);
+      return mapAlert(raw, this.ctx, true);
+    } catch (error) {
+      if (error instanceof JiraApiError && error.kind === 'not_found') return null;
+      throw error;
+    }
+  }
+
+  private async fullSync(previous: SourceSnapshot | null, now: number): Promise<SourceSnapshot> {
+    await this.refreshTeams();
+    const lookbackStart = now - this.config.closedLookbackHours * 3_600_000;
+    const wantClosed = this.config.maxClosedAlerts > 0 && this.config.closedLookbackHours > 0;
+
+    const [open, closed] = await Promise.all([
+      this.fetchAll(this.query(this.config.openQuery), this.config.maxOpenAlerts),
+      wantClosed
+        ? this.fetchAll(this.query(`createdAt > ${lookbackStart} AND (${this.config.closedQuery})`), this.config.maxClosedAlerts)
+        : Promise.resolve<FetchResult>({ raws: [], total: 0, skipped: 0 }),
+    ]);
+
+    const alerts = new Map<string, AlertDetail>();
+    for (const raw of closed.raws) alerts.set(raw.id, this.map(raw));
+    for (const raw of open.raws) alerts.set(raw.id, this.map(raw));
+    // Alerts created before the lookback window but closed recently are not
+    // returned by the query above; keep the ones this process already knows.
+    this.carryOverClosed(previous, alerts, lookbackStart);
+
+    return {
+      alerts,
+      truncated: (open.total ?? 0) > this.config.maxOpenAlerts,
+      skipped: open.skipped + closed.skipped,
+    };
+  }
+
+  private async lightSync(previous: SourceSnapshot, now: number): Promise<SourceSnapshot> {
+    const open = await this.fetchAll(this.query(this.config.openQuery), this.config.maxOpenAlerts);
+    const truncated = (open.total ?? 0) > this.config.maxOpenAlerts;
+
+    const alerts = new Map<string, AlertDetail>();
+    for (const raw of open.raws) alerts.set(raw.id, this.map(raw));
+
+    // Alerts that left the open list were most likely closed. When the list is
+    // truncated, absence proves nothing, so they are simply dropped.
+    const disappeared = truncated
+      ? []
+      : [...previous.alerts.values()].filter((a) => a.status !== 'closed' && !alerts.has(a.id));
+    if (disappeared.length > MAX_DISAPPEARED_LOOKUPS) {
+      log.info('many alerts left the open list, running a full sync instead', { count: disappeared.length });
+      return this.fullSync(previous, now);
+    }
+    await Promise.all(
+      disappeared.map(async (alert) => {
+        try {
+          const detail = await this.loadDetail(alert.id);
+          if (detail) alerts.set(detail.id, detail);
+        } catch {
+          alerts.set(alert.id, alert); // keep the last known state; retried next run
+        }
+      }),
+    );
+
+    this.carryOverClosed(previous, alerts, now - this.config.closedLookbackHours * 3_600_000);
+    return { alerts, truncated, skipped: open.skipped };
+  }
+
+  private carryOverClosed(previous: SourceSnapshot | null, into: Map<string, AlertDetail>, lookbackStart: number): void {
+    if (!previous) return;
+    for (const alert of previous.alerts.values()) {
+      if (alert.status !== 'closed' || into.has(alert.id)) continue;
+      if ((alert.closeTime ?? alert.updatedAt) >= lookbackStart) into.set(alert.id, alert);
+    }
+  }
+
+  /**
+   * Fetches description and extra properties for alerts whose list entry did
+   * not include them. Bounded per run, so a large backlog is filled in over
+   * several runs instead of in one burst of requests.
+   */
+  private async enrich(alerts: Map<string, AlertDetail>): Promise<void> {
+    const mode = this.config.enrichDetails;
+    if (mode === 'never' || this.config.enrichMaxPerSync === 0) return;
+    const candidates = [...alerts.values()]
+      .filter((a) => !a.detailLoaded && (mode === 'always' || a.status !== 'closed'))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, this.config.enrichMaxPerSync);
+    if (candidates.length === 0) return;
+
+    let stop = false;
+    await Promise.all(
+      candidates.map(async (alert) => {
+        if (stop) return;
+        try {
+          const detail = await this.loadDetail(alert.id);
+          if (detail) alerts.set(detail.id, detail);
+        } catch (error) {
+          // Back off for this run as soon as Jira pushes back.
+          if (error instanceof JiraApiError && error.kind !== 'not_found') stop = true;
+        }
+      }),
+    );
+  }
+
+  /** Reads every page of a query, up to `limit` alerts. */
+  private async fetchAll(query: string, limit: number): Promise<FetchResult> {
+    const byId = new Map<string, RawAlert>();
+    let skipped = 0;
+    const pageSize = Math.min(MAX_PAGE_SIZE, limit);
+
+    const first = await this.client.listAlerts({ query, offset: 0, size: pageSize });
+    for (const raw of first.alerts) byId.set(raw.id, raw);
+    skipped += first.skipped;
+    if (!first.hasNext) return { raws: [...byId.values()], total: first.total, skipped };
+
+    const offsets: number[] = [];
+    const wanted = Math.min(limit, first.total ?? limit);
+    for (let offset = pageSize; offset < wanted && offset + pageSize < MAX_OFFSET_PLUS_SIZE; offset += pageSize) {
+      offsets.push(offset);
+    }
+
+    if (first.total !== null) {
+      // Total is known: remaining pages can be requested concurrently
+      // (the client caps concurrency).
+      const pages = await Promise.all(offsets.map((offset) => this.client.listAlerts({ query, offset, size: pageSize })));
+      for (const page of pages) {
+        for (const raw of page.alerts) byId.set(raw.id, raw);
+        skipped += page.skipped;
+      }
+    } else {
+      for (const offset of offsets) {
+        const page = await this.client.listAlerts({ query, offset, size: pageSize });
+        for (const raw of page.alerts) byId.set(raw.id, raw);
+        skipped += page.skipped;
+        if (!page.hasNext) break;
+      }
+    }
+    return { raws: [...byId.values()].slice(0, limit), total: first.total, skipped };
+  }
+
+  private query(base: string): string {
+    return this.config.alertQuery ? `(${this.config.alertQuery}) AND ${base}` : base;
+  }
+
+  private map(raw: RawAlert): AlertDetail {
+    if (raw.extraProperties === undefined || raw.extraProperties === null) {
+      const cached = this.details.get(raw.id);
+      if (cached && cached.updatedAt === raw.updatedAt) {
+        return mapAlert(
+          {
+            ...raw,
+            extraProperties: cached.extraProperties,
+            description: raw.description ?? cached.description,
+            actions: raw.actions ?? cached.actions,
+          },
+          this.ctx,
+          true,
+        );
+      }
+    }
+    return mapAlert(raw, this.ctx);
+  }
+
+  private rememberDetail(raw: RawAlert): void {
+    this.details.set(raw.id, {
+      updatedAt: raw.updatedAt,
+      description: raw.description,
+      extraProperties: raw.extraProperties ?? {},
+      actions: raw.actions,
+    });
+  }
+
+  private pruneDetailCache(alerts: Map<string, AlertDetail>): void {
+    for (const id of this.details.keys()) if (!alerts.has(id)) this.details.delete(id);
+  }
+
+  /** Team names label responders. Failure is not fatal: ids are shown instead. */
+  private async refreshTeams(): Promise<void> {
+    try {
+      const names = await this.client.listTeams();
+      this.teamNames.clear();
+      for (const [id, name] of names) this.teamNames.set(id, name);
+    } catch (error) {
+      log.warn('could not load team names; responders are shown without names', {
+        status: error instanceof JiraApiError ? (error.status ?? 'none') : 'none',
+      });
+    }
+  }
+}
