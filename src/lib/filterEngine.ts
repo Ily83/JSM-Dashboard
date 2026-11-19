@@ -16,6 +16,7 @@ import {
 } from '../config/filterFields';
 import { quickFilterById, type QuickFilterContext, type QuickFilterId } from '../config/quickFilters';
 import { inSection, type SectionDef } from '../config/sections';
+import { compileQuery } from './query';
 
 /**
  * Filter state and evaluation. Pure functions, no React, no storage: the same
@@ -221,14 +222,9 @@ export function filterAlerts(alerts: readonly Alert[], query: ViewQuery): Alert[
   }
   const quick = quickFilterById(query.quick);
   if (quick) predicates.push((alert) => quick.test(alert, profile));
-  const terms = query.search.toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length > 0) {
-    predicates.push((alert) => {
-      const text = searchText(alert);
-      for (const term of terms) if (!text.includes(term)) return false;
-      return true;
-    });
-  }
+  // Plain words or the query language (src/lib/query.ts), compiled once.
+  const search = compileQuery(query.search, { now: query.now, searchText });
+  if (search.predicate) predicates.push(search.predicate);
 
   const out: Alert[] = [];
   outer: for (const alert of alerts) {

@@ -22,6 +22,14 @@ import {
   SchedulesPageSchema,
   TenantInfoSchema,
   type RawAlert,
+  HeartbeatSchema,
+  MaintenanceSchema,
+  OnCallResponseSchema,
+  OpsEntitySchema,
+  PagedValuesSchema,
+  ScheduleSchema,
+  type RawMaintenance,
+  type RawOnCallParticipant,
 } from './schemas';
 
 /**
@@ -82,7 +90,41 @@ export class JiraApiError extends Error {
 /** What a request is for: decides which message a failure gets. */
 export type Purpose = 'sync' | 'read' | 'write';
 
-function errorForStatus(status: number, retryAfterMs: number | null, purpose: Purpose = 'sync'): JiraApiError {
+/**
+ * Jira's own reason from a refused write (for example a plan or permission
+ * limit), cut short and stripped of control characters. Shown to the user
+ * who asked for the write; never logged.
+ */
+async function refusalText(response: Response): Promise<string | null> {
+  try {
+    const text = (await response.text()).slice(0, 4000);
+    const body: unknown = JSON.parse(text);
+    if (!body || typeof body !== 'object') return null;
+    const b = body as Record<string, unknown>;
+    const parts: string[] = [];
+    const add = (v: unknown) => {
+      if (typeof v === 'string' && v.trim()) parts.push(v.trim());
+    };
+    add(b.message);
+    add(b.errorMessage);
+    if (Array.isArray(b.errorMessages)) b.errorMessages.forEach(add);
+    if (Array.isArray(b.errors)) {
+      for (const e of b.errors) if (e && typeof e === 'object') add((e as Record<string, unknown>).title ?? (e as Record<string, unknown>).message ?? (e as Record<string, unknown>).detail);
+    } else if (b.errors && typeof b.errors === 'object') {
+      Object.values(b.errors as Record<string, unknown>).forEach(add);
+    }
+    const joined = [...new Set(parts)].join(' ').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+    return joined ? joined.slice(0, 300) : null;
+  } catch {
+    return null;
+  }
+}
+
+function errorForStatus(status: number, retryAfterMs: number | null, purpose: Purpose = 'sync', detail: string | null = null): JiraApiError {
+  if (purpose === 'write' && detail && status !== 401 && status !== 429) {
+    const kind = status === 403 ? 'forbidden' : status === 404 ? 'not_found' : status >= 500 ? 'server' : 'validation';
+    return new JiraApiError(kind, status, `Jira refused the request (${status}): ${detail}`);
+  }
   if (purpose !== 'sync' && status !== 401 && status !== 429) {
     const verb = purpose === 'write' ? 'this action' : 'reading this';
     switch (status) {
@@ -124,9 +166,19 @@ function parseRetryAfter(header: string | null): number | null {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** Request body of Create global / team maintenance (CreateMaintenanceRequest), as documented. */
+export interface CreateMaintenanceBody {
+  description?: string;
+  startDate?: string;
+  endDate?: string;
+  rules: Array<{ entity: { id: string; type: 'integration' | 'policy' | 'sync' }; state: 'disabled' | 'enabled' }>;
+}
+
 /** Request body of Create alert, as documented. */
 export interface CreateAlertBody {
   message: string;
+  /** Custom actions offered on the alert. */
+  actions?: string[];
   alias?: string;
   description?: string;
   responders?: Array<{ id: string; type: 'team' | 'user' | 'escalation' | 'schedule' }>;
@@ -311,6 +363,62 @@ export class JiraClient {
     return { accountId: user.accountId, displayName: user.displayName ?? user.accountId };
   }
 
+  // ---- Operations context (maintenances, heartbeats, on-call) -------------
+
+  /** Reads up to `maxPages` pages of an offset-paged list. */
+  private async pages<S extends z.ZodType>(path: string, item: S, size: number, maxPages: number, query: Record<string, string> = {}): Promise<z.infer<S>[]> {
+    const out: z.infer<S>[] = [];
+    for (let page = 0, offset = 0; page < maxPages; page += 1, offset += size) {
+      const body = await this.get(path, PagedValuesSchema, { ...query, offset, size }, 'read');
+      const values = parseEach(body.values, item);
+      out.push(...values);
+      if (!body.links?.next || (body.values ?? []).length === 0) break;
+    }
+    return out;
+  }
+
+  /** Active and planned maintenances: global, or of one team. */
+  listMaintenances(teamId?: string): Promise<RawMaintenance[]> {
+    const path = teamId ? `/v1/teams/${encodeURIComponent(teamId)}/maintenances` : '/v1/maintenances';
+    return this.pages(path, MaintenanceSchema, 100, 5, { type: 'non-expired' });
+  }
+
+  /** What a maintenance rule can point at: integrations, global alert policies or syncs. */
+  listMaintenanceEntities(kind: 'integration' | 'policy' | 'sync'): Promise<Array<z.infer<typeof OpsEntitySchema>>> {
+    const path = kind === 'integration' ? '/v1/integrations' : kind === 'policy' ? '/v1/alerts/policies' : '/v1/syncs';
+    return this.pages(path, OpsEntitySchema, 100, 5);
+  }
+
+  /** Schedules with their owning team (size is at most 50 for this endpoint). */
+  listScheduleDetails(): Promise<Array<z.infer<typeof ScheduleSchema>>> {
+    return this.pages('/v1/schedules', ScheduleSchema, 50, 10);
+  }
+
+  listHeartbeats(teamId: string): Promise<Array<z.infer<typeof HeartbeatSchema>>> {
+    return this.pages(`/v1/teams/${encodeURIComponent(teamId)}/heartbeats`, HeartbeatSchema, 100, 5);
+  }
+
+  /** Who is on call now for one schedule, as the nested participant tree. */
+  async listOnCall(scheduleId: string): Promise<RawOnCallParticipant[]> {
+    const body = await this.get(`/v1/schedules/${encodeURIComponent(scheduleId)}/on-calls`, OnCallResponseSchema, { flat: 'false' }, 'read');
+    if (body.onCallParticipants) return body.onCallParticipants;
+    return (body.onCallUsers ?? []).map((id) => ({ id, type: 'user' }));
+  }
+
+  /** Create global or team maintenance. Jira answers 201 with the maintenance (no request status). */
+  createMaintenance(body: CreateMaintenanceBody, teamId: string | null): Promise<RawMaintenance> {
+    const path = teamId ? `/v1/teams/${encodeURIComponent(teamId)}/maintenances` : '/v1/maintenances';
+    return this.write('POST', path, body, MaintenanceSchema);
+  }
+
+  /** Cancel global or team maintenance: ends an active one early, or calls off a planned one. */
+  cancelMaintenance(id: string, teamId: string | null): Promise<RawMaintenance> {
+    const path = teamId
+      ? `/v1/teams/${encodeURIComponent(teamId)}/maintenances/${encodeURIComponent(id)}/cancel`
+      : `/v1/maintenances/${encodeURIComponent(id)}/cancel`;
+    return this.write('POST', path, undefined, MaintenanceSchema);
+  }
+
   // ---- Writes ------------------------------------------------------------
 
   /**
@@ -340,6 +448,8 @@ export class JiraClient {
         return this.sendAsync('POST', `${path}/tags`, { tags: action.tags });
       case 'removeTags':
         return this.sendAsync('DELETE', `${path}/tags`, { tags: action.tags });
+      case 'customAction':
+        return this.sendAsync('POST', `${path}/action`, { actionName: action.actionName });
       case 'addNote':
         // Add alert note answers 200 with the note itself: done synchronously.
         await this.write('POST', `${path}/notes`, { note: action.note }, z.unknown());
@@ -354,9 +464,29 @@ export class JiraClient {
     return { state, message };
   }
 
+  // ---- Test-site tools: used by scripts/ only, never by the application ----
+
+  /** Create heartbeat (POST /v1/teams/{teamId}/heartbeats). */
+  async createHeartbeat(
+    teamId: string,
+    body: { name: string; description?: string; interval: number; intervalUnit: 'minutes' | 'hours' | 'days'; enabled: boolean; alertMessage?: string; alertTags?: string[]; alertPriority?: CreateAlertBody['priority'] },
+  ): Promise<void> {
+    await this.write('POST', `/v1/teams/${encodeURIComponent(teamId)}/heartbeats`, body, z.unknown());
+  }
+
+  /** Ping heartbeat (GET /v1/teams/{teamId}/heartbeats/ping?name=). */
+  async pingHeartbeat(teamId: string, name: string): Promise<void> {
+    await this.get(`/v1/teams/${encodeURIComponent(teamId)}/heartbeats/ping`, z.unknown(), { name }, 'read');
+  }
+
+  /** Delete heartbeat (DELETE /v1/teams/{teamId}/heartbeats?name=). */
+  async deleteHeartbeat(teamId: string, name: string): Promise<void> {
+    await this.write('DELETE', `/v1/teams/${encodeURIComponent(teamId)}/heartbeats?name=${encodeURIComponent(name)}`, undefined, z.unknown());
+  }
+
   /**
    * Create alert (POST /v1/alerts). Not used by the application: only by the
-   * script that fills a test site with sample alerts (scripts/jira-test-alerts.ts).
+   * scripts that fill a test site (scripts/jira-test-alerts.ts, scripts/jira-simulate.ts).
    */
   async createAlert(body: CreateAlertBody): Promise<ActionResult & { alertId: string | null }> {
     const accepted = await this.write('POST', '/v1/alerts', body, AcceptedResponseSchema);
@@ -489,10 +619,12 @@ export class JiraClient {
 
     log.debug('jira request', { path: safePath, status: response.status, ms: Date.now() - started });
     if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
+      const wantsReason = purpose === 'write' && response.status >= 400 && response.status < 500 && response.status !== 401 && response.status !== 429;
+      const detail = wantsReason ? await refusalText(response) : null;
+      if (!wantsReason) await response.body?.cancel().catch(() => undefined);
       const retryAfter = response.headers.get('retry-after');
       log.warn('jira request rejected', { path: safePath, status: response.status, ...(retryAfter ? { retryAfter } : {}) });
-      throw errorForStatus(response.status, parseRetryAfter(response.headers.get('retry-after')), purpose);
+      throw errorForStatus(response.status, parseRetryAfter(response.headers.get('retry-after')), purpose, detail);
     }
 
     let json: unknown;

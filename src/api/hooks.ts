@@ -36,7 +36,7 @@ const ALERTS_KEY = ['alerts'] as const;
  *    (the table rows in particular) do not re-render.
  *  - Polling pauses while the browser tab is hidden.
  */
-export function useAlerts(refreshSeconds: number, enabled = true) {
+export function useAlerts(refreshSeconds: number, enabled = true, keepPollingInBackground = false) {
   const queryClient = useQueryClient();
   const forceNext = useRef(false);
 
@@ -51,8 +51,10 @@ export function useAlerts(refreshSeconds: number, enabled = true) {
       if (response.unchanged && previous) return { ...previous, meta: response.meta };
       return { version: response.version, alerts: response.alerts, meta: response.meta };
     },
-    refetchInterval: refreshSeconds > 0 ? refreshSeconds * 1000 : false,
-    refetchIntervalInBackground: false,
+    // The P1 alarm needs polling to continue while the tab is hidden, and
+    // even with auto-refresh off (then every 60 seconds).
+    refetchInterval: refreshSeconds > 0 ? refreshSeconds * 1000 : keepPollingInBackground ? 60_000 : false,
+    refetchIntervalInBackground: keepPollingInBackground,
     refetchOnWindowFocus: true,
     staleTime: 10_000,
     gcTime: Infinity,

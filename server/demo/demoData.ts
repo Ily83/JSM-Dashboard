@@ -298,6 +298,8 @@ function fromSeed(seed: Seed, index: number, now: number): RawAlert {
   else for (const customer of seed.customers ?? []) tags.push(`customer:${customer}`);
   if (seed.serviceTag) tags.push(`service:${seed.serviceTag}`);
   if (seed.service) props.service = seed.service;
+  // A runbook link on some alerts, as many integrations add one (fictional address).
+  if (index % 3 === 0) props.runbook = `https://wiki.example.com/runbooks/${encodeURIComponent(seed.entity ?? 'general')}`;
 
   const id = `demo-${String(index + 1).padStart(4, '0')}-${(index * 2654435761 >>> 0).toString(16).padStart(8, '0')}`;
   return {
@@ -321,7 +323,8 @@ function fromSeed(seed: Seed, index: number, now: number): RawAlert {
       ...(seed.teams ?? []).map((teamId) => ({ id: teamId, type: 'team' })),
       ...(seed.users ?? []).map((userId) => ({ id: userId, type: 'user' })),
     ],
-    actions: [],
+    // Custom actions as integrations define them; a few alerts offer some.
+    actions: index % 3 === 0 ? ['Run diagnostics', 'Restart service'] : [],
     integrationType: seed.type,
     integrationName: seed.integration,
     createdAt: iso(now, seed.min),

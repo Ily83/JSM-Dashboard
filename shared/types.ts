@@ -127,6 +127,8 @@ export interface ExtractionRules {
   serviceTagPrefixes: string[];
   servicePropertyKeys: string[];
   serviceFallbackToEntity: boolean;
+  /** Rules in CUSTOMER_MAP_FILE (entity -> customers), 0 when none. */
+  customerMapRules?: number;
 }
 
 export interface StatusResponse {

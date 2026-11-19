@@ -5,7 +5,7 @@ Wishlist items, not scheduled work. Items done in 0.2.0 are ticked; see RELEASE_
 ## Jira alert actions
 
 - [x] Add single-alert actions: Acknowledge, Unacknowledge (shown as **Open** on an acknowledged alert in Jira), Close, Assign, Add responder, Snooze, and Escalate. Verify whether the public API can match Jira's **Escalate to next** behavior before using that label.
-  - Done. The API operation is itself named "Escalate alert to next" and needs the escalation to move along, so the picker offers the escalations of the alert's teams and those already on the alert. Not tried live yet: the test site has no Operations team or escalation.
+  - Done. The API operation is itself named "Escalate alert to next" and needs the escalation to move along, so the picker offers the escalations of the alert's teams and those already on the alert. Verified live in 0.3.0.
 - [x] Add multi-select and bulk acknowledge. The public API acknowledges one alert per request, so show the selected count before confirmation and report successes and failures for each alert.
   - Done, for acknowledge, unacknowledge and close. Alerts an action does not fit are skipped and counted.
 - [x] Consider additional capabilities: view or add notes, change priority, edit tags, and view or upload attachments. Reading notes and attachments can be considered separately from enabling writes.
@@ -32,3 +32,27 @@ Reuse the History date, customer, and tag filters. Label rankings as partial whe
 - [x] **Reusable customer dashboard:** Switch customers without duplicating saved views. Let users apply the customer selection to KPIs, charts, and the alert table together, and clearly label whether metrics are filtered or global.
 - [x] **Saved History investigations:** Save and reopen a date range, customer and tag filters, and the selected breakdown. Carry those filters into the alert list when drilling down from a chart.
 - [x] **Group repeats in the live table:** Offer expandable alert groups with separate counts for distinct Jira records and total Jira occurrences. Keep individual alerts accessible and reuse the grouping rules from Recurring alerts.
+
+## Ideas from similar projects
+
+Compared with karma, Alerta, Keep, Siren and jsm-tui on 2026-11-19. Scope: Jira Service Management only.
+
+- [x] P1 alarm: sound and desktop notification, P1 only.
+- [x] Single-key actions.
+- [x] Clickable links and a runbook button.
+- [x] Filters in the URL and Copy link.
+- [x] Health endpoints.
+- [x] Run the alert's custom actions.
+- [x] MTTA and MTTR in History.
+- [x] Maintenance windows: list, create, end.
+- [x] Heartbeats.
+- [x] Who is on call now.
+- [x] Lanes by customer, service or team.
+- [x] 24-hour activity strip per alert group.
+- [x] Personal watch list.
+- [x] Customers from an entity mapping file.
+- [x] Query language in search.
+- [ ] Names for schedule and escalation responders in live mode (the lists are already loaded for the pickers).
+- [ ] Decide whether "assign" may keep using the general Jira people search (`/rest/api/3/user/search`, `/rest/api/3/myself`), or should offer only the alert's responders, to stay strictly within JSM.
+
+Not planned: several Jira sites in one console, per-person sign-in with roles, correlating alerts into incidents, automated workflows.

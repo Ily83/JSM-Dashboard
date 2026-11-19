@@ -112,7 +112,8 @@ const STARTER_VIEWS = (): SavedView[] => [
   },
 ];
 
-function sanitizeState(stored: unknown): ViewState {
+/** Validates a view state from storage, an imported file or a shared link. */
+export function sanitizeViewState(stored: unknown): ViewState {
   const s = isRecord(stored) ? stored : {};
   const sorting: SortingState = Array.isArray(s.sorting)
     ? s.sorting
@@ -123,7 +124,7 @@ function sanitizeState(stored: unknown): ViewState {
   return {
     quick: isQuickFilterId(s.quick) ? s.quick : null,
     filters: sanitizeFilters(s.filters),
-    search: typeof s.search === 'string' ? s.search.slice(0, 200) : '',
+    search: typeof s.search === 'string' ? s.search.slice(0, 500) : '',
     sorting,
   };
 }
@@ -144,7 +145,7 @@ export function sanitizeSavedView(item: unknown): SavedView | null {
     id: item.id,
     name: typeof item.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 80) : 'Untitled view',
     section: isSectionId(item.section) ? item.section : 'all',
-    state: sanitizeState(item.state),
+    state: sanitizeViewState(item.state),
     layout: sanitizeLayout(item.layout),
   };
 }
@@ -164,7 +165,7 @@ export const viewsStore = createPersistentStore<ViewsData>(
     }
     const known = (id: unknown): string | null => (typeof id === 'string' && ids.has(id) ? id : null);
     return {
-      current: sanitizeState(stored.current),
+      current: sanitizeViewState(stored.current),
       activeViewId: known(stored.activeViewId),
       saved,
       defaultViewId: known(stored.defaultViewId),

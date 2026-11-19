@@ -1,7 +1,8 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Copy, Download, Play, RotateCcw, Star, Trash2, Upload } from 'lucide-react';
 import { ACTION_IDS, ACTION_LABEL } from '../../shared/actions';
-import type { StatusResponse } from '../../shared/types';
+import type { Alert, StatusResponse } from '../../shared/types';
+import { desktopPermission, playAlarm, requestDesktopPermission, showDesktop, unlockAudio, type DesktopPermission } from '../lib/alarm';
 import { COLUMN_INFO } from '../config/columns';
 import { FILTER_FIELDS, type FilterFieldId } from '../config/filterFields';
 import { SECTIONS } from '../config/sections';
@@ -104,6 +105,90 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (che
 }
 
 const resetButton = 'flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-accent hover:bg-hover';
+
+const SAMPLE_P1: Alert = {
+  id: 'alarm-test',
+  tinyId: null,
+  alias: null,
+  summary: 'Test: this is how a new P1 alert is announced',
+  priority: 'P1',
+  status: 'open',
+  rawStatus: 'open',
+  acknowledged: false,
+  customers: [],
+  tags: [],
+  service: 'Alert Center',
+  entity: null,
+  assignee: null,
+  responders: [],
+  source: 'Alert Center',
+  rawSource: null,
+  integrationName: null,
+  integrationType: null,
+  createdAt: 0,
+  updatedAt: 0,
+  lastOccurredAt: null,
+  ackTime: null,
+  closeTime: null,
+  snoozedUntil: null,
+  count: 1,
+  url: null,
+};
+
+/** P1 alarm: only P1 alerts, never other priorities. */
+function P1AlarmCard({ sound, desktop }: { sound: boolean; desktop: boolean }) {
+  const [permission, setPermission] = useState<DesktopPermission>(desktopPermission);
+  const [tested, setTested] = useState<string | null>(null);
+  const blocked = permission === 'denied' || permission === 'unsupported';
+  return (
+    <Card id="p1-alarm" title="P1 alarm">
+      <Row label="Sound" hint="New P1 alerts only">
+        <Toggle
+          label="Sound for new P1 alerts"
+          checked={sound}
+          onChange={(on) => {
+            if (on) unlockAudio();
+            patchPrefs({ p1Sound: on });
+          }}
+        />
+      </Row>
+      <Row label="Desktop notification" hint={blocked ? (permission === 'unsupported' ? 'Not supported by this browser' : 'Blocked in the browser settings') : 'New P1 alerts only'}>
+        <Toggle
+          label="Desktop notification for new P1 alerts"
+          checked={desktop && permission === 'granted'}
+          onChange={(on) => {
+            if (!on) {
+              patchPrefs({ p1Desktop: false });
+              return;
+            }
+            void requestDesktopPermission().then((next) => {
+              setPermission(next);
+              patchPrefs({ p1Desktop: next === 'granted' });
+            });
+          }}
+        />
+      </Row>
+      <Row label="Test">
+        {tested && <span className="text-xs text-subtle">{tested}</span>}
+        <button
+          type="button"
+          className={resetButton}
+          onClick={() => {
+            unlockAudio();
+            // Give the audio context a moment to start on the first click.
+            setTimeout(() => {
+              const played = playAlarm();
+              const shown = desktopPermission() === 'granted' ? showDesktop([SAMPLE_P1], () => undefined) : 0;
+              setTested([played ? 'Sound played' : 'Sound unavailable', shown ? 'notification shown' : 'no notification'].join(' · '));
+            }, 50);
+          }}
+        >
+          Play test
+        </button>
+      </Row>
+    </Card>
+  );
+}
 const smallIcon = 'rounded p-1 text-muted hover:bg-hover hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent';
 const select = 'h-7 rounded-md border border-line-strong bg-panel px-1.5 text-xs text-fg';
 const th = 'px-2 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted';
@@ -187,6 +272,8 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
             </button>
           </Row>
         </Card>
+
+        <P1AlarmCard sound={prefs.p1Sound} desktop={prefs.p1Desktop} />
 
         <Card id="information" title="Visible information">
           <Row label="Timestamps">
@@ -504,6 +591,7 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
               <dt className="text-muted">Customer from</dt>
               <dd className="break-words">
                 tags {status.extraction.customerTagPrefixes.map((p) => `“${p}…”`).join(', ') || '–'} · properties {status.extraction.customerPropertyKeys.join(', ') || '–'}
+                {(status.extraction.customerMapRules ?? 0) > 0 && ` · mapping file (${status.extraction.customerMapRules} rules)`}
               </dd>
               <dt className="text-muted">Service from</dt>
               <dd className="break-words">

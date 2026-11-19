@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
-import { ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, FlaskConical, LayoutGrid, LoaderCircle, Moon, RefreshCw, Sun } from 'lucide-react';
+import { Bell, BellRing, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, FlaskConical, LayoutGrid, LoaderCircle, Moon, RefreshCw, Sun } from 'lucide-react';
 import type { SyncMeta } from '../../shared/types';
 import { cn } from '../lib/cn';
 import { formatAbsolute, formatClock, formatRelative } from '../lib/format';
 import { useNow } from '../lib/now';
+import { MaintenanceIndicator } from './dashboard/opsWidgets';
 import { REFRESH_OPTIONS, type Theme } from '../state/prefs';
 
 interface TopBarProps {
@@ -21,6 +22,8 @@ interface TopBarProps {
   showLiveControls?: boolean;
   /** Customer scope control, on the alert pages only. */
   scope?: ReactNode;
+  /** P1 alarm (sound and desktop notification) on or off. */
+  alarm?: { on: boolean; tip: string; onToggle: () => void };
   /** Dashboard controls, absent on the settings page. */
   dashboard?: { collapsed: boolean; editing: boolean; onToggleCollapsed: () => void; onToggleEditing: () => void };
 }
@@ -94,6 +97,7 @@ export function TopBar(props: TopBarProps) {
       )}
 
       {props.scope}
+      <MaintenanceIndicator />
 
       <div className="ml-auto flex flex-none items-center gap-1.5">
         {props.showLiveControls !== false && (
@@ -147,6 +151,19 @@ export function TopBar(props: TopBarProps) {
               <LayoutGrid size={15} aria-hidden />
             </button>
           </>
+        )}
+        {props.alarm && (
+          <button
+            type="button"
+            onClick={props.alarm.onToggle}
+            aria-pressed={props.alarm.on}
+            aria-label="P1 alarm"
+            data-tip={props.alarm.tip}
+            data-tip-always=""
+            className={props.alarm.on ? 'flex size-7 items-center justify-center rounded-md border border-transparent text-crit hover:bg-hover' : iconButton()}
+          >
+            {props.alarm.on ? <BellRing size={15} aria-hidden /> : <Bell size={15} aria-hidden />}
+          </button>
         )}
         <button
           type="button"

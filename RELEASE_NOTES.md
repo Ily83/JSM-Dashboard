@@ -2,6 +2,65 @@
 
 Newest release first. Each release lists what changed, how to install or update, and what is known not to work yet.
 
+## 0.3.0 (2026-11-19)
+
+A P1 alarm, keyboard actions, a query language, shareable links, lanes, response times, maintenance windows and Operations widgets. Everything stays within Jira Service Management Operations.
+
+### Update from 0.2
+
+```bash
+git pull
+npm ci
+```
+
+Restart the application. Preferences saved in the browser are kept. To create and end maintenance windows, add `maintenance` to `JIRA_WRITE_ACTIONS` (or keep `true`).
+
+### New
+
+- **P1 alarm:** the bell in the top bar plays a tone and shows a desktop notification when a P1 alert arrives (new, raised to P1, or back from snooze). Other priorities never alarm. Settings → P1 alarm has separate switches and a test button.
+- **Keys** for the open alert: A acknowledge, U unacknowledge, C close (confirm with C or Enter, Esc cancels), W watch, O open in Jira, N note.
+- **Watch list:** a star marks alerts you follow; the "Watching" quick filter lists them.
+- **Links and runbooks:** web addresses in descriptions, notes and properties are clickable, and a runbook link gets its own button.
+- **Custom actions:** run the actions an integration defines on an alert, after confirmation.
+- **Search queries:** for example `priority:P1 AND customer:Contoso`, `created<2h` or `NOT tag:test`. Plain words still work as before.
+- **Copy link:** the address now carries filters, search, quick filter and sorting, so a view can be shared.
+- **Lanes:** split the table by customer, service or team; works together with Group repeats.
+- **24-hour strip** for repeated alerts, in the table and in History → Recurring.
+- **History → Response:** MTTA and MTTR (median and 90th percentile) by priority, customer or alert group.
+- **Maintenance windows:** a widget that lists them and can create and end them (write action `maintenance`), a top-bar indicator while one is active, and a badge on covered alerts.
+- **Heartbeats** and **On call now** widgets.
+- **`CUSTOMER_MAP_FILE`:** customers from an entity mapping file, in addition to tags and properties.
+- **`/healthz` and `/readyz`** for process or container probes.
+- **End-to-end tests:** `npm run e2e` (demo mode, 13 browser tests) and `npm run e2e:live` (round trip with a Jira test site). The first time on a computer, run `npx playwright install chromium`.
+- **Simulator:** `npm run jira:simulate -- run --yes` plays a realistic 12-minute scenario on a Jira test site (outage, repeats, flapping alert, expiring heartbeat, acknowledge and resolve); `cleanup --yes` undoes it.
+
+### Changed
+
+- When Jira refuses a write, its reason is now shown (shortened, never logged).
+- Closed alerts get their extra properties too (up to ten per run, after the open ones), so their service and customers no longer fall back to the entity. Known properties stay visible while an alert changes.
+- In demo mode, acknowledging sets the owner and unacknowledging clears it, as Jira does.
+- The demo data has runbook links and custom actions on some alerts.
+
+### Tested
+
+- 153 unit tests.
+- `npm run e2e`: 13 browser tests in demo mode, no console errors.
+- `npm run e2e:live` against the trial site (Premium trial): 4 round-trip tests pass, including a custom action ("Executed action: Run diagnostics").
+- The simulator ran on the trial site; the heartbeat expired and Jira raised its alert, which the Heartbeats widget and the table show.
+- Also on the trial site: Escalate to next, team, schedule and escalation responders, and creating and ending a maintenance window.
+
+### Not tested yet
+
+- Heartbeats with real data, and creating a team maintenance window.
+- "Open in Jira" in a browser signed in to Jira.
+- Windows and macOS.
+
+### Known limits
+
+- On-call users and user, schedule and escalation responders are shown by id in live mode; the Operations API returns no names.
+- Maintenance coverage of alerts is matched by integration name; policy and sync rules cannot be matched to alerts.
+- The 24-hour strip shows only each alert's last re-occurrence; Jira keeps no record of earlier ones.
+
 ## 0.2.0 (2026-11-19)
 
 Write actions on alerts (off by default), bulk actions, repeated-alert grouping, History analytics, a customer scope, and settings backup. First run against a real Jira site.
@@ -50,7 +109,7 @@ Or allow only some actions, for example `JIRA_WRITE_ACTIONS=acknowledge,unacknow
 
 ### Not tested yet
 
-- Escalate to next and team responders on a real site (the test site has no Operations team yet).
+- Escalate to next and team responders on a real site (done in 0.3.0).
 - The Standard plan: Free refuses assign and snooze, Premium allows them; Standard was not tried.
 - "Open in Jira" in a browser signed in to Jira.
 - Windows and macOS.

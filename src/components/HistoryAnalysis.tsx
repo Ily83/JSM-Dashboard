@@ -1,8 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, Flame, Repeat, Users, type LucideIcon } from 'lucide-react';
+import { CalendarDays, Flame, Repeat, Timer, Users, type LucideIcon } from 'lucide-react';
 import type { Alert } from '../../shared/types';
-import { HISTORY_PAGE_SIZE, parseUtcDate } from '../../shared/history';
+import { DAY_MS, HISTORY_PAGE_SIZE, parseUtcDate } from '../../shared/history';
 import { fetchHistory } from '../api/client';
 import type { AlertGroup } from '../lib/alertGroups';
 import { cn } from '../lib/cn';
@@ -17,6 +17,8 @@ import {
   type HotspotDimension,
   type RankedEntry,
 } from '../lib/historyBreakdowns';
+import { formatDuration, responseBreakdown, responseStats, type DurationStats, type ResponseDimension, type ResponseRow, type ResponseStats } from '../lib/responseTimes';
+import { ActivityStrip } from './ActivityStrip';
 import { HistoryTable } from './HistoryTable';
 
 const monthFormat = new Intl.DateTimeFormat(undefined, { month: 'short', year: '2-digit', timeZone: 'UTC' });
@@ -32,7 +34,10 @@ const BREAKDOWN_INFO: Record<Breakdown, { label: string; title: string; icon: Lu
   recurring: { label: 'Recurring', title: 'Recurring alerts', icon: Repeat },
   hotspots: { label: 'P1 hotspots', title: 'P1 hotspots', icon: Flame },
   customers: { label: 'Per customer', title: 'Alerts per customer', icon: Users },
+  response: { label: 'Response', title: 'Time to acknowledge and close', icon: Timer },
 };
+
+const RESPONSE_LABEL: Record<ResponseDimension, string> = { priority: 'Priority', customer: 'Customer', group: 'Alert group' };
 
 const DIMENSION_LABEL: Record<HotspotDimension, string> = { customer: 'Customer', service: 'Service', group: 'Alert group' };
 
@@ -49,9 +54,9 @@ interface Selection {
 }
 
 export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Props) {
-  const { customer, tag, breakdown, p1Only, dimension } = settings;
+  const { customer, tag, breakdown, p1Only, dimension, responseBy } = settings;
   // The selected bar or row belongs to one breakdown; the page to one selection.
-  const selectionContext = `${breakdown}|${dimension}`;
+  const selectionContext = `${breakdown}|${breakdown === 'response' ? responseBy : dimension}`;
   const [pick, setPick] = useState<{ context: string; key: string } | null>(null);
   const picked = pick?.context === selectionContext ? pick.key : null;
   const pageContext = `${selectionContext}|${picked}|${customer}|${tag}|${p1Only}`;
@@ -99,6 +104,12 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Props)
     [alerts, breakdown, p1Only],
   );
   const hotspots = useMemo(() => (breakdown === 'hotspots' ? rankHotspots(alerts, dimension) : []), [alerts, breakdown, dimension]);
+  const response = useMemo(
+    () => (breakdown === 'response' ? { overall: responseStats(alerts), rows: responseBreakdown(alerts, responseBy) } : null),
+    [alerts, breakdown, responseBy],
+  );
+  // Activity strips in Recurring end with the selected range (or now, if earlier).
+  const activityEnd = Math.min(Date.now(), (parseUtcDate(to) ?? Date.now()) + DAY_MS);
 
   const partial = months.some((month) => month.partial);
   const usesP1Toggle = breakdown === 'recurring' || breakdown === 'customers';
@@ -154,12 +165,17 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Props)
     const group = recurring.find((g) => g.key === picked);
     if (group) selection = { title: group.label, alerts: group.alerts };
     hint = 'Select a group to inspect its alerts.';
-    ranking = <RecurringTable groups={recurring} picked={picked} onPick={choose} />;
+    ranking = <RecurringTable groups={recurring} picked={picked} onPick={choose} activityEnd={activityEnd} />;
   } else if (breakdown === 'hotspots') {
     const entry = hotspots.find((e) => e.key === picked);
     if (entry) selection = { title: `${entry.label} · P1`, alerts: entry.alerts };
     hint = `Select a ${DIMENSION_LABEL[dimension].toLowerCase()} to inspect its P1 alerts.`;
     ranking = <BarList entries={hotspots} picked={picked} onPick={choose} variant="p1" label={`P1 alerts per ${DIMENSION_LABEL[dimension].toLowerCase()}`} />;
+  } else if (breakdown === 'response') {
+    const row = response!.rows.find((r) => r.key === picked);
+    if (row) selection = { title: `${RESPONSE_LABEL[responseBy]}: ${row.label}`, alerts: row.alerts };
+    hint = 'Select a row to inspect its alerts.';
+    ranking = <ResponseTable overall={response!.overall} rows={response!.rows} picked={picked} onPick={choose} by={responseBy} />;
   } else {
     const entry = perCustomer.entries.find((e) => e.key === picked);
     if (entry) selection = { title: p1Only ? `${entry.label} · P1` : entry.label, alerts: entry.alerts };
@@ -250,6 +266,14 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Props)
               </select>
             </label>
           )}
+          {breakdown === 'response' && (
+            <label className="flex items-center gap-1.5 text-xs text-muted">
+              By
+              <select className={select} value={responseBy} onChange={(event) => onSettingsChange({ responseBy: event.target.value as ResponseDimension })}>
+                {(Object.keys(RESPONSE_LABEL) as ResponseDimension[]).map((id) => <option key={id} value={id}>{RESPONSE_LABEL[id]}</option>)}
+              </select>
+            </label>
+          )}
           {usesP1Toggle && (
             <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium">
               <input type="checkbox" className="size-3.5 accent-(--accent)" checked={p1Only} onChange={(event) => onSettingsChange({ p1Only: event.target.checked })} />
@@ -299,7 +323,7 @@ function MoreRows({ shown, total }: { shown: number; total: number }) {
   return <p className="px-2 pt-1 text-xs tabular-nums text-subtle">Top {shown} of {total.toLocaleString()}</p>;
 }
 
-function RecurringTable({ groups, picked, onPick }: { groups: AlertGroup[]; picked: string | null; onPick: (key: string) => void }) {
+function RecurringTable({ groups, picked, onPick, activityEnd }: { groups: AlertGroup[]; picked: string | null; onPick: (key: string) => void; activityEnd: number }) {
   if (groups.length === 0) return <RankingEmpty />;
   const rows = groups.slice(0, MAX_ROWS);
   return (
@@ -312,6 +336,7 @@ function RecurringTable({ groups, picked, onPick }: { groups: AlertGroup[]; pick
               <th scope="col" className="px-3 py-1.5 text-right" data-tip="Distinct alert records in Jira" data-tip-always="">Records</th>
               <th scope="col" className="px-3 py-1.5 text-right" data-tip="Jira de-duplication count summed over the records" data-tip-always="">Occurrences</th>
               <th scope="col" className="px-3 py-1.5 text-right">P1</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-1.5" data-tip="Alerts created per hour in the last 24 hours of the range" data-tip-always="">24 h</th>
               <th scope="col" className="px-3 py-1.5">Customers</th>
               <th scope="col" className="whitespace-nowrap px-3 py-1.5">First (UTC)</th>
               <th scope="col" className="whitespace-nowrap px-3 py-1.5">Last (UTC)</th>
@@ -340,6 +365,7 @@ function RecurringTable({ groups, picked, onPick }: { groups: AlertGroup[]; pick
                   <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{group.records}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{group.occurrences.toLocaleString()}</td>
                   <td className={cn('px-3 py-1.5 text-right tabular-nums', group.p1 > 0 ? 'font-semibold text-crit' : 'text-subtle')}>{group.p1}</td>
+                  <td className="px-3 py-1.5"><ActivityStrip alerts={group.alerts} end={activityEnd} /></td>
                   <td className="max-w-48 truncate px-3 py-1.5 text-xs text-muted" data-tip={group.customers.join(', ') || undefined}>{group.customers.join(', ') || '—'}</td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-muted">{dayFormat.format(group.firstCreatedAt)}</td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-muted">{dayFormat.format(group.lastCreatedAt)}</td>
@@ -407,6 +433,84 @@ function BarList({ entries, picked, onPick, variant, label }: {
         })}
       </ul>
       <MoreRows shown={rows.length} total={entries.length} />
+    </div>
+  );
+}
+
+function DurationCell({ stats, kind, strong }: { stats: DurationStats; kind: 'ack' | 'close'; strong?: boolean }) {
+  const verb = kind === 'ack' ? 'acknowledged' : 'closed';
+  const tip = `Based on ${stats.count.toLocaleString()} alerts${stats.missing ? ` · ${stats.missing.toLocaleString()} not ${verb}, left out` : ''}`;
+  return (
+    <>
+      <td className={cn('whitespace-nowrap px-3 py-1.5 text-right tabular-nums', strong && 'font-semibold', stats.median === null && 'text-subtle')} data-tip={tip} data-tip-always="">
+        {formatDuration(stats.median)}
+      </td>
+      <td className={cn('whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-muted', stats.p90 === null && 'text-subtle')} data-tip={tip} data-tip-always="">
+        {formatDuration(stats.p90)}
+      </td>
+    </>
+  );
+}
+
+/** Median and 90th percentile time to acknowledge and to close, overall and per row. */
+function ResponseTable({ overall, rows, picked, onPick, by }: {
+  overall: ResponseStats;
+  rows: ResponseRow[];
+  picked: string | null;
+  onPick: (key: string) => void;
+  by: ResponseDimension;
+}) {
+  if (overall.alerts === 0) return <RankingEmpty />;
+  const shown = rows.slice(0, MAX_ROWS);
+  return (
+    <div>
+      <div className="max-h-80 overflow-auto rounded border border-line">
+        <table className="w-full text-left text-sm">
+          <thead className="sticky top-0 bg-panel text-xs text-muted">
+            <tr>
+              <th scope="col" className="px-3 py-1.5">{RESPONSE_LABEL[by]}</th>
+              <th scope="col" className="px-3 py-1.5 text-right">Alerts</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-1.5 text-right" data-tip="Median time from creation to acknowledgement" data-tip-always="">MTTA</th>
+              <th scope="col" className="px-3 py-1.5 text-right" data-tip="90% of acknowledgements were faster" data-tip-always="">p90</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-1.5 text-right" data-tip="Median time from creation to close" data-tip-always="">MTTR</th>
+              <th scope="col" className="px-3 py-1.5 text-right" data-tip="90% of closes were faster" data-tip-always="">p90</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-t border-line bg-raised">
+              <th scope="row" className="px-3 py-1.5 font-semibold">All</th>
+              <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{overall.alerts.toLocaleString()}</td>
+              <DurationCell stats={overall.ack} kind="ack" strong />
+              <DurationCell stats={overall.close} kind="close" strong />
+            </tr>
+            {shown.map((row) => {
+              const active = row.key === picked;
+              return (
+                <tr key={row.key} onClick={() => onPick(row.key)} className={cn('cursor-pointer border-t border-line hover:bg-hover', active && 'bg-accent-soft')}>
+                  <th scope="row" className="max-w-0 w-full min-w-48 px-3 py-1.5 text-left font-normal">
+                    <button
+                      type="button"
+                      aria-pressed={active}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onPick(row.key);
+                      }}
+                      className="block w-full truncate text-left hover:underline"
+                      data-tip={row.label}
+                    >
+                      {row.label}
+                    </button>
+                  </th>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{row.alerts.length.toLocaleString()}</td>
+                  <DurationCell stats={row.stats.ack} kind="ack" />
+                  <DurationCell stats={row.stats.close} kind="close" />
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <MoreRows shown={shown.length} total={rows.length} />
     </div>
   );
 }

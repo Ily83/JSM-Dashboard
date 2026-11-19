@@ -217,6 +217,30 @@ describe('Jira integration (against a fake API)', () => {
     expect([...third.alerts.values()].every((a) => a.detailLoaded)).toBe(true);
   });
 
+  it('also reads a few closed alerts, and keeps known properties when an alert changes', async () => {
+    const open = makeAlerts(3).map((a) => ({ ...a, tags: [] }));
+    const closed = makeAlerts(15, 'closed').map((a) => ({ ...a, tags: [] }));
+    const jira = fakeJira({ alerts: [...open, ...closed], listOmitsExtraProperties: true });
+    const settings = { ...config };
+    const source = new JiraSource(settings, rules, new JiraClient(settings, 4, jira.fetchImpl));
+
+    const first = await source.sync(null);
+    const closedDetails = () => jira.calls.filter((c) => /\/v1\/alerts\/closed-/.test(c.path)).length;
+    // Open alerts first, then at most ten closed ones per run.
+    expect(closedDetails()).toBe(10);
+    expect(first.alerts.get('closed-0000')?.service).toBe('Billing');
+
+    // The alert changes in Jira (a note, say): its list entry is newer, the
+    // cached properties stay visible until they are read again (no reading in this run).
+    settings.enrichMaxPerSync = 0;
+    open[0]!.updatedAt = new Date(Date.now() + 1000).toISOString();
+    const second = await source.sync(first);
+    const changed = second.alerts.get('open-0000')!;
+    expect(changed.service).toBe('Billing');
+    expect(changed.customers).toContain('Fabrikam');
+    expect(changed.detailLoaded).toBe(false);
+  });
+
   it('turns HTTP errors into sanitised errors', async () => {
     const jira = fakeJira({ alerts: [] });
     const client = new JiraClient(config, 4, jira.fetchImpl);

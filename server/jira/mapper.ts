@@ -26,6 +26,8 @@ export interface MapContext {
   teamNames: ReadonlyMap<string, string>;
   /** Id -> name for users, schedules and escalations, when known. */
   otherNames?: ReadonlyMap<string, string>;
+  /** Customers for an entity from CUSTOMER_MAP_FILE; adds to the tag and property rules. */
+  customersForEntity?: (entity: string | null) => readonly string[];
   /** Builds the "Open in Jira" link, or null when there is no Jira site. */
   alertUrl: (id: string) => string | null;
 }
@@ -122,6 +124,7 @@ export function mapAlert(raw: RawAlert, ctx: MapContext, fromDetailEndpoint = fa
   }
 
   const entity = clean(raw.entity);
+  for (const customer of ctx.customersForEntity?.(entity) ?? []) addUnique(customers, seenCustomers, customer);
   if (!service && rules.serviceFallbackToEntity) service = entity;
   customers.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 

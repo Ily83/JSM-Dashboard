@@ -5,3 +5,5 @@ dist/
 !.env.example
 *.log
 .claude/worktrees/
+test-results/
+playwright-report/

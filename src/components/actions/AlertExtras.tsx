@@ -6,6 +6,7 @@ import { useAttachments, useLogs, useNotes } from '../../api/hooks';
 import { formatAbsolute, formatRelative } from '../../lib/format';
 import { useNow } from '../../lib/now';
 import { TagChip } from '../ui/badges';
+import { Linkify } from '../ui/Linkify';
 
 /**
  * Detail panel sections that need their own requests: notes (loaded with
@@ -103,7 +104,9 @@ export function NotesSection({ alertId, canAdd, run, busy }: { alertId: string; 
                   <When ms={note.createdAt} />
                 </span>
               </div>
-              <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed">{note.note}</p>
+              <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed">
+                <Linkify text={note.note} />
+              </p>
             </li>
           ))}
         </ul>

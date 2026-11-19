@@ -93,7 +93,8 @@ describe('saved History investigations', () => {
   const valid = { id: 'i1', name: '  Q1 review ', from: '2026-01-01', to: '2026-03-31', customer: 'Contoso', tag: '', breakdown: 'hotspots', p1Only: true, dimension: 'service' };
 
   it('keeps valid entries and trims names', () => {
-    expect(sanitizeInvestigation(valid)).toEqual({ ...valid, name: 'Q1 review' });
+    expect(sanitizeInvestigation(valid)).toEqual({ ...valid, name: 'Q1 review', responseBy: 'priority' });
+    expect(sanitizeInvestigation({ ...valid, breakdown: 'response', responseBy: 'customer' })).toMatchObject({ breakdown: 'response', responseBy: 'customer' });
   });
 
   it('drops invalid dates and duplicate ids, and repairs unknown values', () => {

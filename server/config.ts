@@ -85,6 +85,7 @@ const EnvSchema = z.object({
   SERVICE_TAG_PREFIXES: list(['service:', 'service=']),
   SERVICE_PROPERTY_KEYS: list(['service']),
   SERVICE_FALLBACK_TO_ENTITY: bool(true),
+  CUSTOMER_MAP_FILE: text,
 });
 
 export interface JiraConfig {
@@ -126,6 +127,10 @@ export interface AppConfig {
   cacheTtlSeconds: number;
   defaultRefreshSeconds: number;
   extraction: ExtractionRules;
+  /** Path of the optional entity -> customer mapping file (loaded and validated at start-up). */
+  customerMapFile: string | null;
+  /** Rules loaded from that file; set at start-up, shown in Settings. */
+  customerMapRules?: number;
   /** Non-fatal configuration problems, shown in Settings. Never contain secrets. */
   warnings: string[];
 }
@@ -238,6 +243,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       servicePropertyKeys: e.SERVICE_PROPERTY_KEYS,
       serviceFallbackToEntity: e.SERVICE_FALLBACK_TO_ENTITY,
     },
+    customerMapFile: e.CUSTOMER_MAP_FILE ?? null,
     warnings,
   };
 }

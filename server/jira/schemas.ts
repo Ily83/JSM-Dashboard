@@ -125,3 +125,72 @@ export const PlatformUserSchema = z.looseObject({
   active: z.boolean().nullish(),
 });
 export const PlatformUsersSchema = z.array(z.unknown());
+
+// ---- Operations context: maintenances, integrations, heartbeats, on-call ------
+// Schemas GetGlobalMaintenance, GetTeamMaintenance, MaintenanceRule,
+// Integration list, alert policy list, sync list, Heartbeat, Schedule and
+// OnCallResponse of the same OpenAPI document.
+
+const MaintenanceRuleSchema = z.looseObject({
+  entity: z.looseObject({ id: z.string().nullish(), type: z.string().nullish() }).nullish(),
+  state: z.string().nullish(),
+});
+
+export const MaintenanceSchema = z.looseObject({
+  id: z.string().min(1),
+  teamId: z.string().nullish(),
+  status: z.string().nullish(),
+  description: z.string().nullish(),
+  startDate: z.string().nullish(),
+  endDate: z.string().nullish(),
+  rules: z.array(MaintenanceRuleSchema).nullish(),
+});
+export type RawMaintenance = z.infer<typeof MaintenanceSchema>;
+
+export const PagedValuesSchema = z.looseObject({
+  values: z.array(z.unknown()).nullish(),
+  links: z.looseObject({ next: z.string().nullish() }).nullish(),
+});
+
+/** Integrations, syncs and alert policies share these fields. */
+export const OpsEntitySchema = z.looseObject({
+  id: z.string().min(1),
+  name: z.string().nullish(),
+  type: z.string().nullish(),
+  enabled: z.boolean().nullish(),
+  teamId: z.string().nullish(),
+});
+
+export const ScheduleSchema = z.looseObject({
+  id: z.string().min(1),
+  name: z.string().nullish(),
+  enabled: z.boolean().nullish(),
+  teamId: z.string().nullish(),
+});
+
+export const HeartbeatSchema = z.looseObject({
+  name: z.string().min(1),
+  description: z.string().nullish(),
+  interval: z.number().nullish(),
+  intervalUnit: z.string().nullish(),
+  enabled: z.boolean().nullish(),
+  status: z.string().nullish(),
+  ownerTeamId: z.string().nullish(),
+});
+
+export interface RawOnCallParticipant {
+  id?: string | null;
+  type?: string | null;
+  onCallParticipants?: RawOnCallParticipant[] | null;
+}
+const OnCallParticipantSchema: z.ZodType<RawOnCallParticipant> = z.lazy(() =>
+  z.looseObject({
+    id: z.string().nullish(),
+    type: z.string().nullish(),
+    onCallParticipants: z.array(OnCallParticipantSchema).nullish(),
+  }),
+);
+export const OnCallResponseSchema = z.looseObject({
+  onCallParticipants: z.array(OnCallParticipantSchema).nullish(),
+  onCallUsers: z.array(z.string()).nullish(),
+});

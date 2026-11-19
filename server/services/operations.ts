@@ -63,6 +63,7 @@ const ActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('priority'), priority: z.enum(PRIORITIES) }),
   z.object({ action: z.literal('addTags'), tags: tagList }),
   z.object({ action: z.literal('removeTags'), tags: tagList }),
+  z.object({ action: z.literal('customAction'), actionName: z.string().trim().min(1).max(200) }),
 ]);
 
 export class ActionRequestError extends Error {
@@ -133,6 +134,13 @@ export class ActionService {
     const action = parseAction(body);
     if (!this.allowed.has(action.action)) {
       throw new ActionRequestError(403, `The action "${action.action}" is not enabled in JIRA_WRITE_ACTIONS.`);
+    }
+    if (action.action === 'customAction') {
+      // Only an action the alert itself offers; never a name made up in the browser.
+      const detail = await this.store.getDetail(id);
+      if (!detail?.actions.includes(action.actionName)) {
+        throw new ActionRequestError(400, 'This alert does not offer that action.');
+      }
     }
     const started = Date.now();
     let result: ActionResult;

@@ -8,6 +8,7 @@ import { formatAge } from '../../lib/format';
 import { useNow } from '../../lib/now';
 import type { DashboardStats, Ranked } from '../../lib/stats';
 import { CustomerBadge, PriorityBadge } from '../ui/badges';
+import { HeartbeatsWidget, MaintenanceWidget, OnCallWidget } from './opsWidgets';
 
 /**
  * Widget components, one per id in config/widgets.ts. Each receives the
@@ -247,4 +248,7 @@ export const WIDGET_COMPONENTS: Record<WidgetId, ComponentType<WidgetProps>> = {
     </Panel>
   ),
   attention: Attention,
+  maintenance: MaintenanceWidget,
+  heartbeats: HeartbeatsWidget,
+  onCall: OnCallWidget,
 };

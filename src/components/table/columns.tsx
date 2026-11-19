@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from 'react';
+import { Star } from 'lucide-react';
 import { createColumnHelper } from '@tanstack/react-table';
 import type { Alert, AlertStatus, Priority } from '../../../shared/types';
 import { formatAbsolute, formatRelative } from '../../lib/format';
@@ -11,6 +12,8 @@ export interface CellOptions {
   timeFormat: 'relative' | 'absolute';
   showTags: boolean;
   showOccurrences: boolean;
+  /** Alerts the user watches: marked with a star. */
+  watched?: ReadonlySet<string>;
 }
 
 const PRIORITY_RANK: Record<Priority, number> = { P1: 1, P2: 2, P3: 3, P4: 4, P5: 5 };
@@ -142,6 +145,7 @@ export function renderCell(id: ColumnId, alert: Alert, width: number, options: C
     case 'summary':
       return (
         <>
+          {options.watched?.has(alert.id) && <Star size={12} aria-label="Watching" fill="currentColor" className="flex-none text-warn" />}
           <span className="truncate font-medium" data-tip={alert.summary}>
             {alert.summary}
           </span>

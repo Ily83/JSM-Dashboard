@@ -1,6 +1,7 @@
 import { HISTORY_MAX_OFFSET, HISTORY_PAGE_SIZE } from '../../shared/history';
 import type { AlertDetail, ExtractionRules, HistoryResponse } from '../../shared/types';
 import type { JiraConfig } from '../config';
+import type { CustomerMap } from '../customerMap';
 import { log } from '../logger';
 import type { AlertSource, HistoryPage, SourceSnapshot } from '../services/source';
 import { JiraApiError, JiraClient, MAX_OFFSET_PLUS_SIZE, MAX_PAGE_SIZE } from './client';
@@ -30,6 +31,8 @@ import type { RawAlert } from './schemas';
  */
 
 const MAX_DISAPPEARED_LOOKUPS = 40;
+/** Closed alerts whose details are read per run in "auto" mode, after the open ones. */
+const CLOSED_ENRICH_PER_SYNC = 10;
 
 interface CachedDetail {
   updatedAt: string | null | undefined;
@@ -55,11 +58,13 @@ export class JiraSource implements AlertSource {
     private readonly config: JiraConfig,
     rules: ExtractionRules,
     private readonly client: JiraClient = new JiraClient(config),
+    customerMap: CustomerMap | null = null,
   ) {
     const template = config.alertUrlTemplate;
     this.ctx = {
       rules,
       teamNames: this.teamNames,
+      ...(customerMap ? { customersForEntity: (entity: string | null) => customerMap.lookup(entity) } : {}),
       alertUrl: (id) =>
         template.replaceAll('{siteUrl}', config.siteUrl).replaceAll('{id}', encodeURIComponent(id)),
     };
@@ -185,10 +190,15 @@ export class JiraSource implements AlertSource {
   private async enrich(alerts: Map<string, AlertDetail>): Promise<void> {
     const mode = this.config.enrichDetails;
     if (mode === 'never' || this.config.enrichMaxPerSync === 0) return;
-    const candidates = [...alerts.values()]
-      .filter((a) => !a.detailLoaded && (mode === 'always' || a.status !== 'closed'))
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, this.config.enrichMaxPerSync);
+    const budget = this.config.enrichMaxPerSync;
+    const missing = [...alerts.values()].filter((a) => !a.detailLoaded).sort((a, b) => b.createdAt - a.createdAt);
+    const open = missing.filter((a) => a.status !== 'closed');
+    const closed = missing.filter((a) => a.status === 'closed');
+    // Open alerts first. In "auto" mode a few closed ones per run as well, so
+    // an alert closed before its details were read still gets its service
+    // and customers from extra properties; once read, they are cached.
+    const closedShare = mode === 'always' ? budget : Math.min(CLOSED_ENRICH_PER_SYNC, Math.max(0, budget - open.length));
+    const candidates = [...open.slice(0, budget), ...closed.slice(0, closedShare)].slice(0, budget);
     if (candidates.length === 0) return;
 
     // Two at a time: enrichment is background work and must leave room in
@@ -253,17 +263,18 @@ export class JiraSource implements AlertSource {
   private map(raw: RawAlert): AlertDetail {
     if (raw.extraProperties === undefined || raw.extraProperties === null) {
       const cached = this.details.get(raw.id);
-      if (cached && cached.updatedAt === raw.updatedAt) {
-        return mapAlert(
-          {
-            ...raw,
-            extraProperties: cached.extraProperties,
-            description: raw.description ?? cached.description,
-            actions: raw.actions ?? cached.actions,
-          },
-          this.ctx,
-          true,
-        );
+      if (cached) {
+        const merged = {
+          ...raw,
+          extraProperties: cached.extraProperties,
+          description: raw.description ?? cached.description,
+          actions: raw.actions ?? cached.actions,
+        };
+        if (cached.updatedAt === raw.updatedAt) return mapAlert(merged, this.ctx, true);
+        // The alert changed since its details were read (acknowledged,
+        // closed...). Extra properties rarely change: keep showing them, and
+        // let the next enrichment read them again.
+        return { ...mapAlert(merged, this.ctx, false), detailLoaded: false };
       }
     }
     return mapAlert(raw, this.ctx);
