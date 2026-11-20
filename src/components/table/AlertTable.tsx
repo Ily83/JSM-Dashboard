@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode, type MouseEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode, type MouseEvent, type PointerEvent } from 'react';
 import { getCoreRowModel, getSortedRowModel, useReactTable, type Header, type SortingState, type Updater } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, ChevronRight, Copy } from 'lucide-react';
@@ -7,6 +7,7 @@ import type { AlertGroup } from '../../lib/alertGroups';
 import { cn } from '../../lib/cn';
 import { alertsOfItem, buildTableItems, itemKey, type LaneBy, type TableItem } from '../../lib/tableItems';
 import { ActivityStrip } from '../ActivityStrip';
+import type { AlertContextMenu } from '../actions/BulkActions';
 import { CustomerBadge, PriorityBadge } from '../ui/badges';
 import { COLUMN_INFO, type ColumnId } from '../../config/columns';
 import { isCritical } from '../../config/sections';
@@ -61,6 +62,7 @@ interface AlertTableProps {
   /** When set, a checkbox column is shown. */
   selection?: ReadonlySet<string>;
   onSelectionChange?: (next: Set<string>) => void;
+  onContextMenu?: (menu: AlertContextMenu) => void;
   groupRepeats?: boolean;
   laneBy?: LaneBy;
 }
@@ -91,6 +93,7 @@ export const AlertTable = memo(function AlertTable({
   emptyState,
   selection,
   onSelectionChange,
+  onContextMenu,
   groupRepeats = false,
   laneBy = 'off',
 }: AlertTableProps) {
@@ -173,6 +176,107 @@ export const AlertTable = memo(function AlertTable({
   itemsRef.current = items;
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  const dragSelection = useRef<{ pointerId: number; x: number; y: number; currentX: number; currentY: number; startIndex: number; base: Set<string>; active: boolean } | null>(null);
+  const scrollFrame = useRef<number | null>(null);
+  const suppressClick = useRef(false);
+  const [selectionBox, setSelectionBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  useEffect(() => () => {
+    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
+  }, []);
+
+  const rowIndexAt = (clientY: number) => {
+    const element = scrollRef.current;
+    if (!element || itemsRef.current.length === 0) return 0;
+    return Math.max(0, Math.min(itemsRef.current.length - 1, Math.floor((clientY - element.getBoundingClientRect().top + element.scrollTop - HEADER_HEIGHT) / rowHeight)));
+  };
+
+  const onSelectionPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (!selectable || event.button !== 0 || event.pointerType !== 'mouse') return;
+    const target = event.target as HTMLElement;
+    const row = target.closest<HTMLElement>('.at-row[data-index]');
+    if (!row || row.hasAttribute('data-lane') || target.closest('button, input, a, [role="button"]')) return;
+    dragSelection.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      currentX: event.clientX,
+      currentY: event.clientY,
+      startIndex: Number(row.dataset.index),
+      base: event.ctrlKey || event.metaKey ? new Set(selectionRef.current) : new Set(),
+      active: false,
+    };
+    event.preventDefault();
+  };
+
+  const updateDragSelection = (drag: NonNullable<typeof dragSelection.current>) => {
+    const element = scrollRef.current;
+    if (!element || !onSelectionChange) return;
+    const rect = element.getBoundingClientRect();
+    const x = Math.max(rect.left, Math.min(rect.right, drag.currentX));
+    const y = Math.max(rect.top + HEADER_HEIGHT, Math.min(rect.bottom, drag.currentY));
+    setSelectionBox({ left: Math.min(drag.x, x), top: Math.min(drag.y, y), width: Math.abs(x - drag.x), height: Math.abs(y - drag.y) });
+    const end = rowIndexAt(y);
+    const next = new Set(drag.base);
+    for (let i = Math.min(drag.startIndex, end); i <= Math.max(drag.startIndex, end); i += 1) {
+      const item = itemsRef.current[i];
+      if (item && item.kind !== 'lane') for (const alert of alertsOfItem(item)) next.add(alert.id);
+    }
+    onSelectionChange(next);
+  };
+
+  const autoScrollSelection = () => {
+    const drag = dragSelection.current;
+    const element = scrollRef.current;
+    if (!drag?.active || !element) {
+      scrollFrame.current = null;
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    const step = drag.currentY < rect.top + HEADER_HEIGHT + 32 ? -12 : drag.currentY > rect.bottom - 32 ? 12 : 0;
+    if (step) {
+      const previous = element.scrollTop;
+      element.scrollTop += step;
+      if (previous !== element.scrollTop) updateDragSelection(drag);
+    }
+    scrollFrame.current = requestAnimationFrame(autoScrollSelection);
+  };
+
+  const onSelectionPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragSelection.current;
+    if (!drag || drag.pointerId !== event.pointerId || !onSelectionChange) return;
+    if (!drag.active && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
+    if (!drag.active) {
+      drag.active = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      scrollFrame.current = requestAnimationFrame(autoScrollSelection);
+    }
+    drag.currentX = event.clientX;
+    drag.currentY = event.clientY;
+    updateDragSelection(drag);
+  };
+
+  const onSelectionPointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragSelection.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.active) suppressClick.current = true;
+    dragSelection.current = null;
+    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
+    scrollFrame.current = null;
+    setSelectionBox(null);
+  };
+
+  const onRowContextMenu = (event: MouseEvent<HTMLDivElement>) => {
+    if (!selectable || !onSelectionChange || !onContextMenu) return;
+    const row = (event.target as HTMLElement).closest<HTMLElement>('.at-row[data-index]');
+    if (!row) return;
+    const item = itemsRef.current[Number(row.dataset.index)];
+    if (!item || item.kind === 'lane') return;
+    event.preventDefault();
+    const targets = alertsOfItem(item);
+    const current = selectionRef.current ?? new Set<string>();
+    if (!targets.every((alert) => current.has(alert.id))) onSelectionChange(new Set(targets.map((alert) => alert.id)));
+    onContextMenu({ x: event.clientX, y: event.clientY, alertId: item.kind === 'alert' ? item.alert.id : null });
+  };
 
   const onCheck = useCallback(
     (index: number, range: boolean) => {
@@ -313,6 +417,22 @@ export const AlertTable = memo(function AlertTable({
       aria-multiselectable={selectable || undefined}
       className={cn('relative min-h-0 flex-1 overflow-auto bg-panel', isResizing && 'cursor-col-resize select-none')}
       style={sizeVars}
+      onPointerDown={onSelectionPointerDown}
+      onPointerMove={onSelectionPointerMove}
+      onPointerUp={onSelectionPointerEnd}
+      onPointerCancel={() => {
+        dragSelection.current = null;
+        if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
+        scrollFrame.current = null;
+        setSelectionBox(null);
+      }}
+      onClickCapture={(event) => {
+        if (!suppressClick.current) return;
+        suppressClick.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onContextMenu={onRowContextMenu}
     >
       <div role="row" aria-rowindex={1} className="at-header" style={{ height: HEADER_HEIGHT, width: 'var(--table-width)', minWidth: '100%' }}>
         {selectable && (
@@ -428,6 +548,14 @@ export const AlertTable = memo(function AlertTable({
             );
           })}
         </div>
+      )}
+      {selectionBox && (
+        <div
+          aria-hidden="true"
+          data-selection-box=""
+          className="pointer-events-none fixed z-30 border border-accent bg-accent/20"
+          style={selectionBox}
+        />
       )}
     </div>
   );

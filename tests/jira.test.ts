@@ -87,6 +87,7 @@ const config: JiraConfig = {
 
 const rules: ExtractionRules = {
   customerTagPrefixes: ['customer:'],
+  customerCompanyTagPrefixes: [],
   customerPropertyKeys: ['customer'],
   serviceTagPrefixes: ['service:'],
   servicePropertyKeys: ['service'],

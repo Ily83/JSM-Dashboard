@@ -5,6 +5,8 @@ export interface HistoryPage {
   /** Exclusive end timestamp. */
   until: number;
   offset: number;
+  /** Low-priority, rate-spaced history analysis rather than an interactive request. */
+  background?: boolean;
 }
 
 /** The alerts known after one synchronisation. */

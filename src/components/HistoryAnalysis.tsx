@@ -3,10 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { CalendarDays, Flame, Repeat, Timer, Users, type LucideIcon } from 'lucide-react';
 import type { Alert } from '../../shared/types';
 import { DAY_MS, HISTORY_PAGE_SIZE, parseUtcDate } from '../../shared/history';
-import { fetchHistory } from '../api/client';
+import { cancelHistoryAnalysis, fetchHistoryAnalysis, fetchHistoryAnalysisResults, startHistoryAnalysis } from '../api/client';
 import type { AlertGroup } from '../lib/alertGroups';
 import { cn } from '../lib/cn';
-import { filterHistoryMonths, loadHistoryMonths, MAX_ANALYSIS_ALERTS_PER_MONTH, type HistoryMonth } from '../lib/historyAnalysis';
+import { filterHistoryMonths, type HistoryMonth } from '../lib/historyAnalysis';
 import {
   analysisAlerts,
   rankCustomers,
@@ -25,7 +25,7 @@ const monthFormat = new Intl.DateTimeFormat(undefined, { month: 'short', year: '
 const dayFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' });
 const button = 'rounded-md border border-line-strong px-2.5 py-1 text-xs font-medium hover:bg-hover disabled:opacity-50';
 const select = 'max-w-64 rounded-md border border-line-strong bg-panel px-2 py-1 text-sm';
-const EMPTY: Awaited<ReturnType<typeof loadHistoryMonths>> = [];
+const EMPTY: HistoryMonth[] = [];
 /** Rankings show the top entries; the drill-down still has every alert. */
 const MAX_ROWS = 100;
 
@@ -199,16 +199,32 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Readon
   const { customer, tag, breakdown, p1Only } = settings;
   const { picked, choose, pageContext, page, setPage } = useDrilldown(settings);
 
-  const query = useQuery({
-    queryKey: ['history-months', from, to],
-    queryFn: ({ signal }) => loadHistoryMonths(
-      parseUtcDate(from)!,
-      parseUtcDate(to)!,
-      (window, offset) => fetchHistory(window, offset, signal),
-    ),
-    staleTime: 5 * 60_000,
+  const [cancelError, setCancelError] = useState('');
+  const start = useQuery({
+    queryKey: ['history-analysis-start', from, to],
+    queryFn: ({ signal }) => startHistoryAnalysis(from, to, signal),
+    refetchOnMount: 'always',
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    retry: false,
+  });
+  const progress = useQuery({
+    queryKey: ['history-analysis-status'],
+    queryFn: ({ signal }) => fetchHistoryAnalysis(signal),
+    enabled: !start.isFetching,
+    refetchInterval: 2000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+  const job = progress.data;
+  const sameJob = !!job && job.id === start.data?.id;
+  const query = useQuery({
+    queryKey: ['history-analysis-results', job?.id],
+    queryFn: ({ signal }) => fetchHistoryAnalysisResults(job!.id, signal),
+    enabled: sameJob && job?.state === 'completed',
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
     retry: false,
   });
   const months = query.data ?? EMPTY;
@@ -225,6 +241,56 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Readon
   const p1Filter = breakdown === 'hotspots' || (usesP1Toggle && p1Only);
   const scoped = p1Filter ? alerts.filter((a) => a.priority === 'P1') : alerts;
 
+  const cancel = async () => {
+    if (!job) return;
+    setCancelError('');
+    try {
+      await cancelHistoryAnalysis(job.id);
+      await progress.refetch();
+    } catch (error) {
+      setCancelError(error instanceof Error ? error.message : 'Could not cancel analysis.');
+    }
+  };
+
+  if (start.isFetching || progress.isPending) return <output className="block p-3 text-sm text-muted">Starting analysis…</output>;
+  if (progress.error) {
+    return (
+      <div role="alert" className="space-y-2 p-3 text-sm text-crit">
+        <p>{progress.error.message}</p>
+        <button type="button" className={button} onClick={() => void progress.refetch()}>Retry</button>
+      </div>
+    );
+  }
+  if (start.error || !sameJob) {
+    return (
+      <div role="alert" className="space-y-2 p-3 text-sm text-crit">
+        <p>{start.error?.message ?? 'The analysis job changed or the server restarted.'}</p>
+        {job?.state === 'running' && <p>Running: {job.from} to {job.to} · {job.recordsRead.toLocaleString()} records read.</p>}
+        {job?.state === 'running' && <button type="button" className={button} onClick={() => void cancel()}>Cancel running analysis</button>}
+        <button type="button" className={button} onClick={() => void start.refetch()}>Retry</button>
+        {cancelError && <p>{cancelError}</p>}
+      </div>
+    );
+  }
+  if (job.state === 'running') {
+    return (
+      <div className="space-y-2 p-3 text-sm text-muted">
+        <output className="block">Analysis running in the background · {job.pages.toLocaleString()} pages · {job.recordsRead.toLocaleString()} records read (including re-reads).</output>
+        <p>Analysing...</p>
+        {job.message && <p>{job.message}</p>}
+        <button type="button" className={button} onClick={() => void cancel()}>Cancel analysis</button>
+        {cancelError && <p role="alert" className="text-crit">{cancelError}</p>}
+      </div>
+    );
+  }
+  if (job.state === 'failed' || job.state === 'cancelled') {
+    return (
+      <div role="alert" className="space-y-2 p-3 text-sm text-crit">
+        <p>{job.message ?? 'Analysis was cancelled.'}</p>
+        <button type="button" className={button} onClick={() => void start.refetch()}>Start again</button>
+      </div>
+    );
+  }
   if (!query.data && query.error) {
     return (
       <div role="alert" className="flex items-center gap-2 p-3 text-sm text-crit">
@@ -233,7 +299,7 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Readon
       </div>
     );
   }
-  if (!query.data) return <output className="block p-3 text-sm text-muted">Loading analysis…</output>;
+  if (!query.data) return <output className="block p-3 text-sm text-muted">Loading completed results in batches…</output>;
 
   const { ranking, selection, hint } = BREAKDOWN_VIEW[breakdown]({ months: filtered, rankings, settings, picked, choose, activityEnd });
   const filterChips = filterChipsFor(customer, tag, p1Filter);
@@ -256,10 +322,10 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Readon
 
         {partial && breakdown === 'month' && (
           <output className="block rounded bg-warn-soft p-2 text-xs text-warn">
-            Counts marked + are incomplete. Analysis reads up to {MAX_ANALYSIS_ALERTS_PER_MONTH} alerts per month and may skip unreadable records.
-            Use <strong>Load history</strong> with a narrower date range to browse more alerts.
+            Counts marked + are incomplete: Jira's pagination limit, unreadable records, or duplicate or out-of-range records prevented a complete scan.
           </output>
         )}
+        <p className="text-xs text-muted">Results reflect retained alerts and their current data as read during the scan, not a historical snapshot. Customers or services stored only in alert details may be missing.</p>
         {query.error && <p role="alert" className="text-xs text-crit">Could not refresh analysis. Showing previous results. {query.error.message}</p>}
         {ranking}
       </div>
@@ -298,7 +364,7 @@ function AnalysisHeader({ title, from, to, partial, count, p1, options, settings
           {partial && (
             <span
               className="rounded bg-warn-soft px-1.5 text-[11px] font-semibold text-warn"
-              data-tip={`Partial: the limit of ${MAX_ANALYSIS_ALERTS_PER_MONTH} alerts per month was reached or records could not be read`}
+              data-tip="Partial: Jira's pagination limit was reached or records could not be read reliably"
               data-tip-always=""
             >
               Partial

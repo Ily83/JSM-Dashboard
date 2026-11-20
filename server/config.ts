@@ -81,6 +81,7 @@ const EnvSchema = z.object({
   REFRESH_INTERVAL_SECONDS: int(60, 10, 3600),
 
   CUSTOMER_TAG_PREFIXES: list(['customer:', 'customer=', 'cust:']),
+  CUSTOMER_COMPANY_TAG_PREFIXES: list([]),
   CUSTOMER_PROPERTY_KEYS: list(['customer', 'customers']),
   SERVICE_TAG_PREFIXES: list(['service:', 'service=']),
   SERVICE_PROPERTY_KEYS: list(['service']),
@@ -238,6 +239,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     defaultRefreshSeconds: e.REFRESH_INTERVAL_SECONDS,
     extraction: {
       customerTagPrefixes: e.CUSTOMER_TAG_PREFIXES,
+      customerCompanyTagPrefixes: e.CUSTOMER_COMPANY_TAG_PREFIXES,
       customerPropertyKeys: e.CUSTOMER_PROPERTY_KEYS,
       serviceTagPrefixes: e.SERVICE_TAG_PREFIXES,
       servicePropertyKeys: e.SERVICE_PROPERTY_KEYS,

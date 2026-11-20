@@ -115,11 +115,12 @@ export class JiraSource implements AlertSource {
     }
   }
 
-  async loadHistory({ from, until, offset }: HistoryPage): Promise<HistoryResponse> {
+  async loadHistory({ from, until, offset, background }: HistoryPage): Promise<HistoryResponse> {
     const page = await this.client.listAlerts({
       query: this.query(`createdAt >= ${from} AND createdAt < ${until}`),
       offset,
       size: HISTORY_PAGE_SIZE,
+      background,
     });
     const total = page.total ?? 0;
     const more = page.hasNext || total > offset + HISTORY_PAGE_SIZE;

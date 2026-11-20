@@ -94,12 +94,15 @@ type AddCustomer = (value: string | null) => void;
 function readTags(rawTags: string[], rules: ExtractionRules, addCustomer: AddCustomer): { service: string | null; otherTags: string[] } {
   const otherTags: string[] = [];
   let service: string | null = null;
+  const companyPrefixes = new Map(rules.customerCompanyTagPrefixes.map((name) => [name.toLowerCase(), name]));
   for (const tag of rawTags) {
     const customer = matchPrefix(tag, rules.customerTagPrefixes);
     if (customer) {
       addCustomer(customer);
       continue;
     }
+    const company = tag.trim().split('-', 1)[0]?.toLowerCase();
+    if (company) addCustomer(companyPrefixes.get(company) ?? null);
     const tagService = matchPrefix(tag, rules.serviceTagPrefixes);
     if (tagService) {
       service ??= tagService;

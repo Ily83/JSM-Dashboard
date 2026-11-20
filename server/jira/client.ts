@@ -89,7 +89,7 @@ export class JiraApiError extends Error {
 }
 
 /** What a request is for: decides which message a failure gets. */
-export type Purpose = 'sync' | 'read' | 'write';
+export type Purpose = 'sync' | 'read' | 'write' | 'background';
 
 /**
  * Jira's own reason from a refused write (for example a plan or permission
@@ -149,7 +149,7 @@ function errorForStatus(status: number, retryAfterMs: number | null, purpose: Pu
   if (purpose === 'write' && detail && status !== 401 && status !== 429) {
     return new JiraApiError(refusalKind(status), status, `Jira refused the request (${status}): ${detail}`);
   }
-  if (purpose !== 'sync' && status !== 401 && status !== 429) {
+  if ((purpose === 'read' || purpose === 'write') && status !== 401 && status !== 429) {
     const error = userRequestError(status, purpose);
     if (error) return error;
   }
@@ -300,6 +300,7 @@ export interface ListAlertsParams {
   size: number;
   sort?: 'createdAt' | 'insertedAt' | 'lastOccurredAt' | 'priority';
   order?: 'asc' | 'desc';
+  background?: boolean;
 }
 
 export class JiraClient {
@@ -307,6 +308,7 @@ export class JiraClient {
   private cloudIdPromise: Promise<string> | null = null;
   private active = 0;
   private readonly waiting: Array<() => void> = [];
+  private readonly backgroundWaiting: Array<() => void> = [];
   /** Total HTTP requests sent to Atlassian since start, for diagnostics. */
   requestCount = 0;
   /** No request is sent before this time (set by a 429). */
@@ -328,7 +330,7 @@ export class JiraClient {
       size: params.size,
       sort: params.sort ?? 'createdAt',
       order: params.order ?? 'desc',
-    });
+    }, params.background ? 'background' : 'sync');
     const values = body.values ?? [];
     const alerts: RawAlert[] = [];
     let skipped = 0;
@@ -628,7 +630,7 @@ export class JiraClient {
    */
   private async request<S extends z.ZodType>(url: string, schema: S, options: RequestOptions = {}): Promise<z.infer<S>> {
     const isWrite = (options.method ?? 'GET') !== 'GET';
-    await this.acquire();
+    await this.acquire(options.purpose === 'background');
     try {
       for (let attempt = 1; ; attempt += 1) {
         // After a 429, every request waits, not only the one that was refused.
@@ -707,16 +709,16 @@ export class JiraClient {
     return parseResponse(await readJson(response), schema, response.status, safePath);
   }
 
-  private acquire(): Promise<void> {
+  private acquire(background: boolean): Promise<void> {
     if (this.active < this.maxConcurrency) {
       this.active += 1;
       return Promise.resolve();
     }
-    return new Promise((resolve) => this.waiting.push(resolve));
+    return new Promise((resolve) => (background ? this.backgroundWaiting : this.waiting).push(resolve));
   }
 
   private release(): void {
-    const next = this.waiting.shift();
+    const next = this.waiting.shift() ?? this.backgroundWaiting.shift();
     if (next) next();
     else this.active -= 1;
   }

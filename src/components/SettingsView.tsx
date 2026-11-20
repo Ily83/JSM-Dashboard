@@ -609,6 +609,7 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
               <dt className="text-muted">Customer from</dt>
               <dd className="break-words">
                 tags {status.extraction.customerTagPrefixes.map((p) => `“${p}…”`).join(', ') || '–'} · properties {status.extraction.customerPropertyKeys.join(', ') || '–'}
+                {(status.extraction.customerCompanyTagPrefixes?.length ?? 0) > 0 && ` · company tags (${status.extraction.customerCompanyTagPrefixes.length} prefixes)`}
                 {(status.extraction.customerMapRules ?? 0) > 0 && ` · mapping file (${status.extraction.customerMapRules} rules)`}
               </dd>
               <dt className="text-muted">Service from</dt>

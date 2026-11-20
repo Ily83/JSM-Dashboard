@@ -123,6 +123,7 @@ export interface HistoryResponse {
 
 export interface ExtractionRules {
   customerTagPrefixes: string[];
+  customerCompanyTagPrefixes: string[];
   customerPropertyKeys: string[];
   serviceTagPrefixes: string[];
   servicePropertyKeys: string[];

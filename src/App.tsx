@@ -1,10 +1,9 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
 import { Layers, Rows2, Rows3, Rows4, TriangleAlert } from 'lucide-react';
-import { BULK_ACTION_IDS } from '../shared/actions';
 import type { Alert, SyncMeta } from '../shared/types';
 import { useAlerts, useStatus, useWriteActions } from './api/hooks';
-import { BulkActionBar } from './components/actions/BulkActions';
+import { BulkActionBar, type AlertContextMenu } from './components/actions/BulkActions';
 import { AlertsEmptyState } from './components/AlertsEmptyState';
 import { useP1Alarm } from './components/useP1Alarm';
 import { requestDesktopPermission, unlockAudio } from './lib/alarm';
@@ -133,10 +132,13 @@ export function App() {
 
   // ---- Selection for bulk actions ---------------------------------------
   const writeActions = useWriteActions();
-  const bulkEnabled = BULK_ACTION_IDS.some((id) => writeActions.has(id));
   const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
+  const [contextMenu, setContextMenu] = useState<AlertContextMenu | null>(null);
   // Only alerts that are still listed count; leaving the section clears it.
-  useEffect(() => setChecked(new Set()), [route.section, route.page]);
+  useEffect(() => {
+    setChecked(new Set());
+    setContextMenu(null);
+  }, [route.section, route.page]);
   const checkedAlerts = useMemo(() => (checked.size === 0 ? NO_ALERTS : visible.filter((a) => checked.has(a.id))), [visible, checked]);
   const clearChecked = useCallback(() => setChecked(new Set()), []);
 
@@ -329,7 +331,14 @@ export function App() {
                   <LanesMenu value={prefs.laneBy} onChange={(laneBy) => patchPrefs({ laneBy })} />
                   <ColumnsMenu />
                 </FilterBar>
-                {bulkEnabled && <BulkActionBar selected={checkedAlerts} allowed={writeActions} onClear={clearChecked} />}
+                <BulkActionBar
+                  selected={checkedAlerts}
+                  allowed={writeActions}
+                  onClear={clearChecked}
+                  contextMenu={contextMenu}
+                  onCloseMenu={() => setContextMenu(null)}
+                  onOpenAlert={selectAlert}
+                />
                 <AlertTable
                   alerts={visible}
                   selectedId={route.alertId}
@@ -341,8 +350,9 @@ export function App() {
                   cellOptions={cellOptions}
                   highlightCritical={prefs.highlightCritical}
                   emptyState={emptyState}
-                  selection={bulkEnabled ? checked : undefined}
-                  onSelectionChange={bulkEnabled ? setChecked : undefined}
+                  selection={checked}
+                  onSelectionChange={setChecked}
+                  onContextMenu={setContextMenu}
                   groupRepeats={prefs.groupRepeats}
                   laneBy={prefs.laneBy}
                 />

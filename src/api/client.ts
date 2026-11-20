@@ -9,6 +9,7 @@ import type {
   Page,
 } from '../../shared/actions';
 import type { AlertDetail, AlertsResponse, HistoryResponse, StatusResponse } from '../../shared/types';
+import { HISTORY_ANALYSIS_RESULT_PAGE_SIZE, type HistoryAnalysisResultPage, type HistoryAnalysisStatus, type HistoryMonth } from '../../shared/historyAnalysis';
 
 /**
  * The frontend talks only to the local backend (/api). It never calls Jira
@@ -72,6 +73,44 @@ export function fetchAlertDetail(id: string, signal?: AbortSignal): Promise<Aler
 export function fetchHistory(window: { from: string; to: string }, offset: number, signal?: AbortSignal): Promise<HistoryResponse> {
   const params = new URLSearchParams({ ...window, offset: String(offset) });
   return getJson(`/api/history?${params}`, signal);
+}
+
+export function startHistoryAnalysis(from: string, to: string, signal?: AbortSignal): Promise<HistoryAnalysisStatus> {
+  return getJson('/api/history-analysis', signal, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Alert-Center-Action': '1' },
+    body: JSON.stringify({ from, to }),
+  });
+}
+
+export function fetchHistoryAnalysis(signal?: AbortSignal): Promise<HistoryAnalysisStatus | null> {
+  return getJson('/api/history-analysis', signal);
+}
+
+export async function fetchHistoryAnalysisResults(id: string, signal?: AbortSignal): Promise<HistoryMonth[]> {
+  const months: HistoryMonth[] = [];
+  for (let month = 0; ; month += 1) {
+    let result: HistoryAnalysisResultPage;
+    let combined: HistoryMonth | null = null;
+    let offset = 0;
+    do {
+      const params = new URLSearchParams({ id, month: String(month), offset: String(offset) });
+      result = await getJson<HistoryAnalysisResultPage>(`/api/history-analysis/results?${params}`, signal);
+      if (!combined) combined = result.month;
+      else combined.alerts.push(...result.month.alerts);
+      offset += HISTORY_ANALYSIS_RESULT_PAGE_SIZE;
+    } while (result.hasNextPage);
+    months.push(combined!);
+    if (!result.hasNextMonth) return months;
+  }
+}
+
+export function cancelHistoryAnalysis(id: string): Promise<HistoryAnalysisStatus> {
+  return getJson('/api/history-analysis/cancel', undefined, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Alert-Center-Action': '1' },
+    body: JSON.stringify({ id }),
+  });
 }
 
 const enc = encodeURIComponent;
