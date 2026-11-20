@@ -2,14 +2,16 @@ import { useState } from 'react';
 import { skipToken, useQuery } from '@tanstack/react-query';
 import { HISTORY_PAGE_SIZE, historyDateLimits, historyWindows, parseUtcDate, previousCalendarMonth, utcDate } from '../../shared/history';
 import { fetchHistory } from '../api/client';
+import { formatUtcRange } from '../lib/historyAnalysis';
 import { DEFAULT_ANALYSIS_SETTINGS, type AnalysisSettings } from '../lib/historyBreakdowns';
 import type { HistoryInvestigation } from '../state/historyInvestigations';
-import { HistoryAnalysis } from './HistoryAnalysis';
+import { HistoryAnalysis, InfoTip } from './HistoryAnalysis';
 import { HistoryInvestigationsMenu } from './HistoryInvestigationsMenu';
 import { HistoryTable } from './HistoryTable';
 
 const button = 'rounded-md border border-line-strong px-2.5 py-1 text-xs font-medium hover:bg-hover disabled:opacity-50';
 const dateInput = 'rounded-md border border-line-strong bg-panel px-2 py-1 text-fg';
+const ABOUT = 'Search retained alerts by creation date, including closed alerts. Dates are in UTC.\nHistory loads on demand and does not change the live dashboard.';
 
 export function HistoryView() {
   const { earliest, today } = historyDateLimits(Date.now());
@@ -39,7 +41,20 @@ export function HistoryView() {
     setOffset(0);
   };
 
-  const analysedRange = analysis && windows.length > 0 ? { from: windows.at(-1)!.from, to: windows[0].to } : { from, to };
+  const analyzedRange = analysis && windows.length > 0 ? { from: windows.at(-1)!.from, to: windows[0].to } : { from, to };
+
+  /** Analyzes another range: the job another tab started, now current on the server. */
+  const openRange = (range: { from: string; to: string }) => {
+    const start = parseUtcDate(range.from);
+    const end = parseUtcDate(range.to);
+    if (start === null || end === null || start > end) return;
+    setFrom(range.from);
+    setTo(range.to);
+    setInputError('');
+    setAnalysis(true);
+    setWindows(historyWindows(start, end));
+    changePeriod(0);
+  };
 
   const openInvestigation = (investigation: HistoryInvestigation) => {
     // Saved dates may have fallen out of the 12-month window since they were saved.
@@ -65,9 +80,6 @@ export function HistoryView() {
   return (
     <main className="flex min-h-0 flex-1 flex-col">
       <div className="flex-none space-y-3 border-b border-line p-3">
-        <p className="text-sm text-muted">
-          Search retained alerts by creation date, including closed alerts. Dates are in UTC. History loads on demand and does not change the live dashboard.
-        </p>
         <div className="flex flex-wrap items-end justify-between gap-2">
           <form className="flex flex-wrap items-end gap-2 text-sm" onSubmit={(event) => {
             event.preventDefault();
@@ -98,9 +110,10 @@ export function HistoryView() {
             <button type="button" className={button} onClick={() => { setFrom(earliest); setTo(today); setInputError(''); }}>Past 12 months</button>
             <button type="submit" className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent">Load history</button>
             <button type="submit" value="analysis" className={button}>Analyze</button>
+            <InfoTip text={ABOUT} className="h-7 px-0.5" />
           </form>
           <HistoryInvestigationsMenu
-            current={{ ...analysedRange, ...settings }}
+            current={{ ...analyzedRange, ...settings }}
             activeId={activeInvestigation}
             onOpen={openInvestigation}
             onActiveChange={setActiveInvestigation}
@@ -116,11 +129,12 @@ export function HistoryView() {
           to={windows[0].to}
           settings={settings}
           onSettingsChange={(patch) => setSettings((current) => ({ ...current, ...patch }))}
+          onOpenRange={openRange}
         />
       ) : selected && (
         <>
           <div className="flex flex-none flex-wrap items-center gap-2 border-b border-line p-3">
-            <strong className="mr-auto text-sm">{selected.from} to {selected.to} (UTC)</strong>
+            <strong className="mr-auto text-sm">{formatUtcRange(selected.from, selected.to)} (UTC)</strong>
             {windows.length > 1 && (
               <>
                 <button type="button" className={button} disabled={period === 0} onClick={() => changePeriod(period - 1)}>Newer dates</button>

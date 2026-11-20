@@ -260,7 +260,7 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto grid max-w-5xl gap-3 p-4 lg:grid-cols-2">
+      <div className="mx-auto grid max-w-5xl grid-cols-[minmax(0,1fr)] gap-3 p-4 lg:grid-cols-2">
         <Card id="appearance" title="Appearance">
           <Row label="Theme">
             <Segmented<Theme>
@@ -465,6 +465,7 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
             </button>
           }
         >
+          <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr>
@@ -516,6 +517,7 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
               })}
             </tbody>
           </table>
+          </div>
         </Card>
 
         <Card
@@ -528,6 +530,7 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
             </button>
           }
         >
+          <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr>
@@ -576,6 +579,7 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
               })}
             </tbody>
           </table>
+          </div>
         </Card>
 
         <Card id="connection" title="Connection">

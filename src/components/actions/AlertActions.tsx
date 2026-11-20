@@ -3,6 +3,7 @@ import { BellOff, Check, CheckCheck, CircleCheck, Ellipsis, Loader2, Play, Rotat
 import type { ActionId, AlertAction } from '../../../shared/actions';
 import type { Alert } from '../../../shared/types';
 import { cn } from '../../lib/cn';
+import { confirmCloseButton, primaryButton } from '../ui/buttons';
 import { Popover } from '../ui/Popover';
 import { AssignPicker, EscalatePicker, PriorityPicker, ResponderPicker, SnoozePicker } from './Pickers';
 import type { RunState } from './useActionRunner';
@@ -13,11 +14,12 @@ import type { RunState } from './useActionRunner';
  * disabled. Close asks for a second click.
  */
 
+// Complete strings per variant: `cn` cannot override a colour a base string sets (see ui/buttons.ts).
 const button =
-  'inline-flex h-7 flex-none items-center gap-1.5 rounded-md border border-line-strong bg-panel px-2 text-xs font-semibold text-fg hover:bg-hover disabled:cursor-default disabled:opacity-50 disabled:hover:bg-panel';
+  'inline-flex h-7 flex-none items-center gap-1.5 rounded-md border border-line-strong bg-panel px-2 text-xs font-semibold text-fg hover:bg-hover active:bg-line disabled:cursor-default disabled:opacity-50 disabled:hover:bg-panel';
 const iconButton =
-  'inline-flex size-7 flex-none items-center justify-center rounded-md border border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg disabled:opacity-50';
-const menuItem = 'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-hover disabled:opacity-50';
+  'inline-flex size-7 flex-none items-center justify-center rounded-md border border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg active:bg-line disabled:opacity-50';
+const menuItem = 'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-hover active:bg-line disabled:opacity-50';
 
 type TriggerRender = ComponentProps<typeof Popover>['trigger'];
 
@@ -44,7 +46,12 @@ type Submenu = 'responder' | 'escalate' | 'priority' | { custom: string } | null
 /** True while the user types somewhere: single-key shortcuts must not fire. */
 export function typingIn(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.closest('[role="dialog"]') !== null;
+  // The alert menu has its own keys (A, U, C act on the menu's selection there).
+  return (
+    target.isContentEditable ||
+    ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
+    target.closest('[role="dialog"], [role="menu"], [data-context-menu]') !== null
+  );
 }
 
 export function AlertActions({ alert, allowed, run, busy, customActions }: Readonly<AlertActionsProps>) {
@@ -118,7 +125,7 @@ export function AlertActions({ alert, allowed, run, busy, customActions }: Reado
           <span className="inline-flex flex-none items-center gap-0.5">
             <button
               type="button"
-              className={cn(button, 'border-ok bg-ok-soft text-ok hover:bg-ok-soft')}
+              className={confirmCloseButton}
               disabled={busy}
               autoFocus
               onClick={() => {
@@ -193,7 +200,7 @@ export function AlertActions({ alert, allowed, run, busy, customActions }: Reado
                 <div className="grid w-56 gap-2 p-2">
                   <span className="break-words text-xs font-semibold">Run “{submenu.custom}”?</span>
                   <div className="flex gap-1">
-                    <button type="button" autoFocus className={cn(button, 'border-accent bg-accent text-on-accent hover:bg-accent hover:opacity-90')} onClick={() => done({ action: 'customAction', actionName: submenu.custom })}>
+                    <button type="button" autoFocus className={primaryButton} onClick={() => done({ action: 'customAction', actionName: submenu.custom })}>
                       <Play size={12} aria-hidden />
                       Run
                     </button>

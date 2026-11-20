@@ -15,6 +15,9 @@ export interface HistoryAnalysisStatus {
   state: 'running' | 'completed' | 'cancelled' | 'failed';
   pages: number;
   recordsRead: number;
+  /** Calendar months scanned so far, of `monthsTotal`. */
+  monthsDone: number;
+  monthsTotal: number;
   partial: boolean;
   message: string | null;
 }

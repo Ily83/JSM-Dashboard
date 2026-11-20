@@ -1,12 +1,13 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, Flame, Repeat, Timer, Users, type LucideIcon } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { CalendarDays, Flame, Info, LoaderCircle, Repeat, Timer, Users, type LucideIcon } from 'lucide-react';
 import type { Alert } from '../../shared/types';
 import { DAY_MS, HISTORY_PAGE_SIZE, parseUtcDate } from '../../shared/history';
+import type { HistoryAnalysisStatus } from '../../shared/historyAnalysis';
 import { cancelHistoryAnalysis, fetchHistoryAnalysis, fetchHistoryAnalysisResults, startHistoryAnalysis } from '../api/client';
 import type { AlertGroup } from '../lib/alertGroups';
 import { cn } from '../lib/cn';
-import { filterHistoryMonths, type HistoryMonth } from '../lib/historyAnalysis';
+import { filterHistoryMonths, formatUtcDay, formatUtcMonth, formatUtcRange, type HistoryMonth } from '../lib/historyAnalysis';
 import {
   analysisAlerts,
   rankCustomers,
@@ -21,13 +22,19 @@ import { formatDuration, responseBreakdown, responseStats, type DurationStats, t
 import { ActivityStrip } from './ActivityStrip';
 import { HistoryTable } from './HistoryTable';
 
-const monthFormat = new Intl.DateTimeFormat(undefined, { month: 'short', year: '2-digit', timeZone: 'UTC' });
-const dayFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' });
 const button = 'rounded-md border border-line-strong px-2.5 py-1 text-xs font-medium hover:bg-hover disabled:opacity-50';
+const linkButton = 'font-medium text-accent hover:underline';
 const select = 'max-w-64 rounded-md border border-line-strong bg-panel px-2 py-1 text-sm';
 const EMPTY: HistoryMonth[] = [];
 /** Rankings show the top entries; the drill-down still has every alert. */
 const MAX_ROWS = 100;
+const STATUS_KEY = ['history-analysis-status'];
+const POLL_MS = 2000;
+
+const SCOPE_NOTE = 'Retained alerts with their current data, as read during the scan: not a snapshot of the past.\nCustomers or services stored only in alert details may be missing.';
+const CUSTOMER_NOTE = 'An alert with several customers counts once for each of them.';
+const PARTIAL_NOTE = "Counts marked + are incomplete: Jira's pagination limit, unreadable records, or duplicate or out-of-range records prevented a complete scan.";
+const RECORDS_NOTE = "Records read from Jira, including ranges read again after a split at Jira's pagination limit.";
 
 const BREAKDOWN_INFO: Record<Breakdown, { label: string; title: string; icon: LucideIcon }> = {
   month: { label: 'Per month', title: 'Alerts created per month', icon: CalendarDays },
@@ -41,11 +48,18 @@ const RESPONSE_LABEL: Record<ResponseDimension, string> = { priority: 'Priority'
 
 const DIMENSION_LABEL: Record<HotspotDimension, string> = { customer: 'Customer', service: 'Service', group: 'Alert group' };
 
+interface DateRange {
+  from: string;
+  to: string;
+}
+
 interface Props {
   from: string;
   to: string;
   settings: AnalysisSettings;
   onSettingsChange: (patch: Partial<AnalysisSettings>) => void;
+  /** Shows the analysis of another range: the one now current on the server. */
+  onOpenRange: (range: DateRange) => void;
 }
 
 interface Selection {
@@ -137,11 +151,69 @@ function useRankings(alerts: readonly Alert[], { breakdown, p1Only, dimension, r
   return { recurring, perCustomer, hotspots, response };
 }
 
+/**
+ * The analysis job of one range. The server keeps a single job: starting the
+ * range joins its running or finished job, or starts a new one. Its status is
+ * polled only while it runs, then its results are loaded once and kept, even
+ * after another tab starts a different analysis or the server restarts.
+ */
+function useAnalysisJob(from: string, to: string) {
+  const queryClient = useQueryClient();
+  const start = useQuery({
+    queryKey: ['history-analysis-start', from, to],
+    queryFn: async ({ signal }) => {
+      const status = await startHistoryAnalysis(from, to, signal);
+      // The answer is the current status: no status of an earlier job shows in between.
+      queryClient.setQueryData(STATUS_KEY, status);
+      return status;
+    },
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: false,
+  });
+  const ownId = start.data?.id;
+  const resultsKey = ['history-analysis-results', ownId];
+  const progress = useQuery({
+    queryKey: STATUS_KEY,
+    queryFn: ({ signal }) => fetchHistoryAnalysis(signal),
+    enabled: !start.isFetching,
+    // Only a running job is polled: this tab's own, or the one it waits for while it has nothing to show.
+    refetchInterval: ({ state }) => {
+      const current = state.data;
+      if (current?.state !== 'running') return false;
+      return current.id === ownId || queryClient.getQueryData(resultsKey) === undefined ? POLL_MS : false;
+    },
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+  const job = progress.data ?? null;
+  const sameJob = !!job && job.id === ownId;
+  const results = useQuery({
+    queryKey: resultsKey,
+    queryFn: async ({ signal }) => {
+      try {
+        return await fetchHistoryAnalysisResults(ownId!, signal);
+      } catch (error) {
+        // Usually replaced by another analysis or lost in a restart: read the status to tell which.
+        if (!signal.aborted) void queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+        throw error;
+      }
+    },
+    enabled: sameJob && job.state === 'completed',
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  return { start, progress, job, sameJob, results };
+}
+
 function monthView({ months, picked, choose }: BreakdownInput): BreakdownView {
   const month = months.find((m) => m.key === picked);
   return {
     ranking: <MonthHistogram months={months} picked={picked} onPick={choose} />,
-    selection: month ? { title: `${month.from} to ${month.to} (UTC)`, alerts: month.alerts } : null,
+    selection: month ? { title: `${formatUtcRange(month.from, month.to)} (UTC)`, alerts: month.alerts } : null,
     hint: 'Select a month to inspect its alerts.',
   };
 }
@@ -195,39 +267,13 @@ const BREAKDOWN_VIEW: Record<Breakdown, (input: BreakdownInput) => BreakdownView
   customers: customersView,
 };
 
-export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Readonly<Props>) {
+export function HistoryAnalysis({ from, to, settings, onSettingsChange, onOpenRange }: Readonly<Props>) {
   const { customer, tag, breakdown, p1Only } = settings;
   const { picked, choose, pageContext, page, setPage } = useDrilldown(settings);
 
   const [cancelError, setCancelError] = useState('');
-  const start = useQuery({
-    queryKey: ['history-analysis-start', from, to],
-    queryFn: ({ signal }) => startHistoryAnalysis(from, to, signal),
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: false,
-  });
-  const progress = useQuery({
-    queryKey: ['history-analysis-status'],
-    queryFn: ({ signal }) => fetchHistoryAnalysis(signal),
-    enabled: !start.isFetching,
-    refetchInterval: 2000,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
-    retry: false,
-  });
-  const job = progress.data;
-  const sameJob = !!job && job.id === start.data?.id;
-  const query = useQuery({
-    queryKey: ['history-analysis-results', job?.id],
-    queryFn: ({ signal }) => fetchHistoryAnalysisResults(job!.id, signal),
-    enabled: sameJob && job?.state === 'completed',
-    staleTime: Infinity,
-    refetchOnWindowFocus: false,
-    retry: false,
-  });
-  const months = query.data ?? EMPTY;
+  const { start, progress, job, sameJob, results } = useAnalysisJob(from, to);
+  const months = results.data ?? EMPTY;
   const options = useMemo(() => filterOptions(months, customer, tag), [months, customer, tag]);
 
   const filtered = useMemo(() => filterHistoryMonths(months, customer, tag), [months, customer, tag]);
@@ -241,72 +287,52 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Readon
   const p1Filter = breakdown === 'hotspots' || (usesP1Toggle && p1Only);
   const scoped = p1Filter ? alerts.filter((a) => a.priority === 'P1') : alerts;
 
-  const cancel = async () => {
-    if (!job) return;
+  const cancel = async (id: string) => {
     setCancelError('');
     try {
-      await cancelHistoryAnalysis(job.id);
+      await cancelHistoryAnalysis(id);
       await progress.refetch();
     } catch (error) {
-      setCancelError(error instanceof Error ? error.message : 'Could not cancel analysis.');
+      setCancelError(error instanceof Error ? error.message : 'Could not cancel the analysis.');
     }
   };
 
-  if (start.isFetching || progress.isPending) return <output className="block p-3 text-sm text-muted">Starting analysis…</output>;
-  if (progress.error) {
+  if (!results.data) {
     return (
-      <div role="alert" className="space-y-2 p-3 text-sm text-crit">
-        <p>{progress.error.message}</p>
-        <button type="button" className={button} onClick={() => void progress.refetch()}>Retry</button>
-      </div>
+      <JobState
+        starting={start.isFetching || progress.isPending}
+        startError={start.error}
+        statusError={progress.error}
+        resultsError={results.error}
+        job={job}
+        sameJob={sameJob}
+        cancelError={cancelError}
+        onCancel={(id) => void cancel(id)}
+        onStartAgain={() => void start.refetch()}
+        onRetryStatus={() => void progress.refetch()}
+        onRetryResults={() => void results.refetch()}
+        onOpenRange={onOpenRange}
+      />
     );
   }
-  if (start.error || !sameJob) {
-    return (
-      <div role="alert" className="space-y-2 p-3 text-sm text-crit">
-        <p>{start.error?.message ?? 'The analysis job changed or the server restarted.'}</p>
-        {job?.state === 'running' && <p>Running: {job.from} to {job.to} · {job.recordsRead.toLocaleString()} records read.</p>}
-        {job?.state === 'running' && <button type="button" className={button} onClick={() => void cancel()}>Cancel running analysis</button>}
-        <button type="button" className={button} onClick={() => void start.refetch()}>Retry</button>
-        {cancelError && <p>{cancelError}</p>}
-      </div>
-    );
-  }
-  if (job.state === 'running') {
-    return (
-      <div className="space-y-2 p-3 text-sm text-muted">
-        <output className="block">Analysis running in the background · {job.pages.toLocaleString()} pages · {job.recordsRead.toLocaleString()} records read (including re-reads).</output>
-        <p>Analysing...</p>
-        {job.message && <p>{job.message}</p>}
-        <button type="button" className={button} onClick={() => void cancel()}>Cancel analysis</button>
-        {cancelError && <p role="alert" className="text-crit">{cancelError}</p>}
-      </div>
-    );
-  }
-  if (job.state === 'failed' || job.state === 'cancelled') {
-    return (
-      <div role="alert" className="space-y-2 p-3 text-sm text-crit">
-        <p>{job.message ?? 'Analysis was cancelled.'}</p>
-        <button type="button" className={button} onClick={() => void start.refetch()}>Start again</button>
-      </div>
-    );
-  }
-  if (!query.data && query.error) {
-    return (
-      <div role="alert" className="flex items-center gap-2 p-3 text-sm text-crit">
-        {query.error.message}
-        <button type="button" className={button} disabled={query.isFetching} onClick={() => void query.refetch()}>Retry</button>
-      </div>
-    );
-  }
-  if (!query.data) return <output className="block p-3 text-sm text-muted">Loading completed results in batches…</output>;
 
   const { ranking, selection, hint } = BREAKDOWN_VIEW[breakdown]({ months: filtered, rankings, settings, picked, choose, activityEnd });
   const filterChips = filterChipsFor(customer, tag, p1Filter);
+  // Results stay once loaded. A job of another range may have replaced this one on the server since.
+  const newer = job && !sameJob ? job : null;
 
   return (
     <section aria-labelledby="history-analysis-title" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="flex-none space-y-3 border-b border-line p-3">
+        {newer && (
+          <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
+            <span>
+              Another analysis is now current: {formatUtcRange(newer.from, newer.to)}
+              {newer.state === 'running' ? ', running' : ''}.
+            </span>
+            <button type="button" className={linkButton} onClick={() => onOpenRange({ from: newer.from, to: newer.to })}>Open it</button>
+          </p>
+        )}
         <AnalysisHeader
           title={BREAKDOWN_INFO[breakdown].title}
           from={from}
@@ -314,19 +340,13 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Readon
           partial={partial}
           count={scoped.length}
           p1={p1Filter}
+          note={breakdown === 'customers' ? `${CUSTOMER_NOTE}\n${SCOPE_NOTE}` : SCOPE_NOTE}
           options={options}
           settings={settings}
           onSettingsChange={onSettingsChange}
         />
         <BreakdownControls settings={settings} usesP1Toggle={usesP1Toggle} onSettingsChange={onSettingsChange} />
-
-        {partial && breakdown === 'month' && (
-          <output className="block rounded bg-warn-soft p-2 text-xs text-warn">
-            Counts marked + are incomplete: Jira's pagination limit, unreadable records, or duplicate or out-of-range records prevented a complete scan.
-          </output>
-        )}
-        <p className="text-xs text-muted">Results reflect retained alerts and their current data as read during the scan, not a historical snapshot. Customers or services stored only in alert details may be missing.</p>
-        {query.error && <p role="alert" className="text-xs text-crit">Could not refresh analysis. Showing previous results. {query.error.message}</p>}
+        {results.error && <p role="alert" className="text-xs text-crit">Could not refresh the analysis; showing the previous results. {results.error.message}</p>}
         {ranking}
       </div>
 
@@ -344,14 +364,184 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange }: Readon
   );
 }
 
+/** An explanation kept out of the layout: an icon with a tooltip, readable by keyboard and screen reader too. */
+export function InfoTip({ text, className }: Readonly<{ text: string; className?: string }>) {
+  return (
+    <span
+      role="img"
+      tabIndex={0}
+      aria-label={text}
+      data-tip={text}
+      data-tip-always=""
+      className={cn('inline-flex flex-none cursor-help items-center rounded-full text-subtle hover:text-fg', className)}
+    >
+      <Info size={13} aria-hidden />
+    </span>
+  );
+}
+
+function BusyLine({ children }: Readonly<{ children: ReactNode }>) {
+  return (
+    <output className="flex items-center gap-2 p-3 text-sm text-muted">
+      <LoaderCircle size={14} aria-hidden className="spin flex-none text-accent" />
+      {children}
+    </output>
+  );
+}
+
+function ErrorLine({ message, children }: Readonly<{ message: string; children?: ReactNode }>) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 p-3 text-sm">
+      <p role="alert" className="text-crit">{message}</p>
+      {children}
+    </div>
+  );
+}
+
+/** Months scanned of the range, as a bar. */
+function MonthProgress({ done, total }: Readonly<{ done: number; total: number }>) {
+  return (
+    <span
+      role="progressbar"
+      aria-label="Months scanned"
+      aria-valuemin={0}
+      aria-valuemax={total}
+      aria-valuenow={done}
+      aria-valuetext={`${done} of ${total} months`}
+      className="block h-1.5 w-24 flex-none overflow-hidden rounded-full bg-line"
+    >
+      <span
+        className="block h-full rounded-full bg-accent transition-[width] duration-200 ease-out motion-reduce:transition-none"
+        style={{ width: `${Math.max(4, (done / total) * 100)}%` }}
+      />
+    </span>
+  );
+}
+
+/** One line while the job runs: progress, counts and Cancel. */
+function RunningLine({ job, cancelError, onCancel }: Readonly<{ job: HistoryAnalysisStatus; cancelError: string; onCancel: () => void }>) {
+  const total = job.monthsTotal;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 p-3 text-sm">
+      {total > 0 ? <MonthProgress done={job.monthsDone} total={total} /> : <LoaderCircle size={14} aria-hidden className="spin flex-none text-accent" />}
+      <output className="flex flex-wrap items-baseline gap-x-2">
+        <span className="font-medium">Analyzing…</span>
+        <span className="tabular-nums text-muted">
+          {total > 0 && `${job.monthsDone}/${total} months · `}
+          {job.pages.toLocaleString()} pages · {job.recordsRead.toLocaleString()} records
+        </span>
+      </output>
+      <InfoTip text={RECORDS_NOTE} />
+      {job.message && <span className="text-xs text-warn">{job.message}</span>}
+      <button type="button" className={button} onClick={onCancel}>Cancel</button>
+      {cancelError && <span role="alert" className="text-xs text-crit">{cancelError}</span>}
+    </div>
+  );
+}
+
+/** Everything before the results are shown: starting, running, failures, and a job replaced by another. */
+function JobState({
+  starting, startError, statusError, resultsError, job, sameJob, cancelError, onCancel, onStartAgain, onRetryStatus, onRetryResults, onOpenRange,
+}: Readonly<{
+  starting: boolean;
+  startError: Error | null;
+  statusError: Error | null;
+  resultsError: Error | null;
+  job: HistoryAnalysisStatus | null;
+  sameJob: boolean;
+  cancelError: string;
+  onCancel: (id: string) => void;
+  onStartAgain: () => void;
+  onRetryStatus: () => void;
+  onRetryResults: () => void;
+  onOpenRange: (range: DateRange) => void;
+}>) {
+  const analyzeAgain = <button type="button" className={button} onClick={onStartAgain}>Analyze again</button>;
+  if (starting) return <BusyLine>Starting analysis…</BusyLine>;
+  if (statusError) {
+    return (
+      <ErrorLine message={statusError.message}>
+        <button type="button" className={button} onClick={onRetryStatus}>Retry</button>
+      </ErrorLine>
+    );
+  }
+  if (startError || !sameJob) {
+    return <ReplacedState startError={startError} job={job} cancelError={cancelError} onCancel={onCancel} onStartAgain={onStartAgain} onOpenRange={onOpenRange} />;
+  }
+  if (!job) return null;
+  if (job.state === 'running') return <RunningLine job={job} cancelError={cancelError} onCancel={() => onCancel(job.id)} />;
+  if (job.state === 'failed') return <ErrorLine message={job.message ?? 'The analysis failed.'}>{analyzeAgain}</ErrorLine>;
+  if (job.state === 'cancelled') {
+    return (
+      <div className="flex flex-wrap items-center gap-2 p-3 text-sm text-muted">
+        <output>Analysis cancelled.</output>
+        {analyzeAgain}
+      </div>
+    );
+  }
+  if (resultsError) {
+    return (
+      <ErrorLine message={`Could not load the results. ${resultsError.message}`}>
+        <button type="button" className={button} onClick={onRetryResults}>Retry</button>
+      </ErrorLine>
+    );
+  }
+  return <BusyLine>Loading results…</BusyLine>;
+}
+
+/**
+ * This range has no job on the server: another range runs and blocks it, another
+ * analysis replaced it, or the server restarted and lost it.
+ */
+function ReplacedState({ startError, job, cancelError, onCancel, onStartAgain, onOpenRange }: Readonly<{
+  startError: Error | null;
+  job: HistoryAnalysisStatus | null;
+  cancelError: string;
+  onCancel: (id: string) => void;
+  onStartAgain: () => void;
+  onOpenRange: (range: DateRange) => void;
+}>) {
+  const open = job && <button type="button" className={button} onClick={() => onOpenRange({ from: job.from, to: job.to })}>Open it</button>;
+  if (startError) {
+    return (
+      <div className="space-y-2 p-3 text-sm">
+        <p role="alert" className="text-crit">{startError.message}</p>
+        {job?.state === 'running' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="tabular-nums text-muted">
+              Running: {formatUtcRange(job.from, job.to)} · {job.pages.toLocaleString()} pages · {job.recordsRead.toLocaleString()} records
+            </span>
+            {open}
+            <button type="button" className={button} onClick={() => onCancel(job.id)}>Cancel it</button>
+          </div>
+        )}
+        <button type="button" className={button} onClick={onStartAgain}>Retry</button>
+        {cancelError && <p role="alert" className="text-xs text-crit">{cancelError}</p>}
+      </div>
+    );
+  }
+  const message = job
+    ? `Another analysis replaced this one: ${formatUtcRange(job.from, job.to)}${job.state === 'running' ? ', running' : ''}.`
+    : 'The server restarted, and this analysis was lost.';
+  return (
+    <div className="flex flex-wrap items-center gap-2 p-3 text-sm text-muted">
+      <output>{message}</output>
+      {open}
+      <button type="button" className={button} onClick={onStartAgain}>Analyze again</button>
+    </div>
+  );
+}
+
 /** Title, number of alerts in scope, and the customer and tag filters. */
-function AnalysisHeader({ title, from, to, partial, count, p1, options, settings, onSettingsChange }: Readonly<{
+function AnalysisHeader({ title, from, to, partial, count, p1, note, options, settings, onSettingsChange }: Readonly<{
   title: string;
   from: string;
   to: string;
   partial: boolean;
   count: number;
   p1: boolean;
+  /** What the figures cover, behind the ⓘ beside the range. */
+  note: string;
   options: { customers: string[]; tags: string[] };
   settings: AnalysisSettings;
   onSettingsChange: (patch: Partial<AnalysisSettings>) => void;
@@ -363,15 +553,22 @@ function AnalysisHeader({ title, from, to, partial, count, p1, options, settings
           {title}
           {partial && (
             <span
+              // Focusable, so the tooltip that explains the + marks opens from the keyboard too.
+              tabIndex={0}
               className="rounded bg-warn-soft px-1.5 text-[11px] font-semibold text-warn"
-              data-tip="Partial: Jira's pagination limit was reached or records could not be read reliably"
+              data-tip={PARTIAL_NOTE}
               data-tip-always=""
             >
               Partial
             </span>
           )}
         </h2>
-        <p className="text-xs text-muted">{from} to {to} (UTC) · {partial ? 'At least ' : ''}{count.toLocaleString()} {p1 ? 'P1 alerts' : 'matching alerts'}</p>
+        <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
+          <span>
+            {formatUtcRange(from, to)} (UTC) · {partial ? 'At least ' : ''}{count.toLocaleString()} {p1 ? 'P1 alerts' : 'matching alerts'}
+          </span>
+          <InfoTip text={note} />
+        </p>
       </div>
       <label className="grid gap-1 text-xs">
         {'Customer'}
@@ -492,13 +689,13 @@ function MonthHistogram({ months, picked, onPick }: Readonly<{ months: HistoryMo
     <div className="overflow-x-auto">
       <ul className="flex min-w-max gap-1" aria-label="Monthly alert histogram">
         {months.map((m) => {
-          const label = monthFormat.format(parseUtcDate(m.from)!);
+          const label = formatUtcMonth(m.from);
           const count = m.alerts.length;
           return (
             <li key={m.key} className="min-w-14 flex-1">
               <button
                 type="button"
-                aria-label={`${label}, ${m.partial ? 'at least ' : ''}${count} alerts`}
+                aria-label={`${label.long}, ${m.partial ? 'at least ' : ''}${count} alerts`}
                 aria-pressed={m.key === picked}
                 onClick={() => onPick(m.key)}
                 className={cn('flex w-full flex-col items-center gap-1 rounded px-1 py-1 text-xs hover:bg-hover', m.key === picked && 'bg-accent-soft')}
@@ -507,7 +704,7 @@ function MonthHistogram({ months, picked, onPick }: Readonly<{ months: HistoryMo
                   <span className={cn('font-semibold tabular-nums', m.partial && 'text-warn')}>{count}{m.partial ? '+' : ''}</span>
                   <span className={cn('mx-auto w-2/3 max-w-16 rounded-t bg-accent', m.partial && 'bg-warn')} style={{ height: `${count / max * 74}%` }} />
                 </span>
-                <span className="whitespace-nowrap text-muted">{label}</span>
+                <span className="whitespace-nowrap text-muted">{label.short}</span>
               </button>
             </li>
           );
@@ -526,16 +723,17 @@ function CustomerRanking({ ranking, p1Only, picked, onPick }: Readonly<{
 }>) {
   return (
     <>
-      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-        <span>Alerts with several customers count once per customer.</span>
-        {ranking.withoutCustomer > 0 && <span className="tabular-nums">{ranking.withoutCustomer.toLocaleString()} without customer</span>}
-        {!p1Only && (
-          <span className="flex items-center gap-2" aria-hidden>
-            <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-crit" />P1</span>
-            <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-accent" />Other</span>
-          </span>
-        )}
-      </p>
+      {(ranking.withoutCustomer > 0 || !p1Only) && (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+          {!p1Only && (
+            <span className="flex items-center gap-2" aria-hidden>
+              <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-crit" />P1</span>
+              <span className="flex items-center gap-1"><span className="size-2 rounded-sm bg-accent" />Other</span>
+            </span>
+          )}
+          {ranking.withoutCustomer > 0 && <span className="tabular-nums">{ranking.withoutCustomer.toLocaleString()} without customer</span>}
+        </p>
+      )}
       <BarList entries={ranking.entries} picked={picked} onPick={onPick} variant={p1Only ? 'p1' : 'stacked'} label="Alerts per customer" />
     </>
   );
@@ -594,8 +792,8 @@ function RecurringTable({ groups, picked, onPick, activityEnd }: Readonly<{ grou
                   <td className={cn('px-3 py-1.5 text-right tabular-nums', group.p1 > 0 ? 'font-semibold text-crit' : 'text-subtle')}>{group.p1}</td>
                   <td className="px-3 py-1.5"><ActivityStrip alerts={group.alerts} end={activityEnd} /></td>
                   <td className="max-w-48 truncate px-3 py-1.5 text-xs text-muted" data-tip={group.customers.join(', ') || undefined}>{group.customers.join(', ') || '—'}</td>
-                  <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-muted">{dayFormat.format(group.firstCreatedAt)}</td>
-                  <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-muted">{dayFormat.format(group.lastCreatedAt)}</td>
+                  <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-muted">{formatUtcDay(group.firstCreatedAt)}</td>
+                  <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-muted">{formatUtcDay(group.lastCreatedAt)}</td>
                 </tr>
               );
             })}

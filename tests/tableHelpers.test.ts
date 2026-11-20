@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Alert } from '../shared/types';
 import { buildTableItems, type BuildOptions, type TableItem } from '../src/lib/tableItems';
-import { arrowToggles, checkState, countSelected, navigationTarget } from '../src/components/table/tableHelpers';
+import { arrowToggles, checkState, countSelected, dragMode, navigationTarget, rowAtContentY } from '../src/components/table/tableHelpers';
 import { makeAlert } from './fixtures';
 
 const base: BuildOptions = { laneBy: 'off', groupRepeats: false, expanded: new Set(), collapsedLanes: new Set() };
@@ -71,5 +71,31 @@ describe('table selection', () => {
     expect(checkState(0, 3)).toBe(false);
     expect(checkState(2, 3)).toBe('mixed');
     expect(checkState(3, 3)).toBe(true);
+  });
+});
+
+describe('table drag selection', () => {
+  it('waits until the pointer has moved past the threshold', () => {
+    expect(dragMode(3, 2, false)).toBe('wait');
+    expect(dragMode(3, 2, true)).toBe('wait');
+  });
+
+  it('selects rows when the drag goes mostly up or down, or starts in the checkbox column', () => {
+    expect(dragMode(4, 20, false)).toBe('rectangle');
+    expect(dragMode(-2, -30, false)).toBe('rectangle');
+    expect(dragMode(40, 2, true)).toBe('rectangle');
+  });
+
+  it('leaves a sideways drag in a cell to text selection', () => {
+    expect(dragMode(40, 3, false)).toBe('text');
+    expect(dragMode(-25, 8, false)).toBe('text');
+  });
+
+  it('finds the row under a content position, clamped to the rows', () => {
+    expect(rowAtContentY(32, 32, 30, 10)).toBe(0);
+    expect(rowAtContentY(32 + 95, 32, 30, 10)).toBe(3);
+    expect(rowAtContentY(5, 32, 30, 10)).toBe(0);
+    expect(rowAtContentY(9999, 32, 30, 10)).toBe(9);
+    expect(rowAtContentY(100, 32, 30, 0)).toBe(0);
   });
 });

@@ -380,7 +380,7 @@ export const FilterBar = memo(function FilterBar({
           Clear all
         </button>
 
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5">
           <span className="mr-1 whitespace-nowrap text-xs tabular-nums text-muted" aria-live="polite">
             <strong className="font-semibold text-fg">{shown.toLocaleString()}</strong>
             {shown !== total && <> of {total.toLocaleString()}</>} alert{total === 1 ? '' : 's'}

@@ -5,6 +5,7 @@ import { PRIORITIES, type Alert, type Priority } from '../../../shared/types';
 import { useEscalations, useMe, useSchedules, useTeams, useUserSearch } from '../../api/hooks';
 import { cn } from '../../lib/cn';
 import { PriorityBadge } from '../ui/badges';
+import { primaryButton } from '../ui/buttons';
 
 /**
  * Pop-over content for the actions that need a choice: who to assign, which
@@ -12,8 +13,8 @@ import { PriorityBadge } from '../ui/badges';
  * Each picker calls `onPick` once and the caller closes the pop-over.
  */
 
-const input = 'h-7 w-full rounded-md border border-line-strong bg-panel px-2 text-xs text-fg placeholder:text-subtle focus:border-accent focus:outline-none';
-const option = 'flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-hover disabled:opacity-50';
+const input = 'h-7 w-full rounded-md border border-line-strong bg-panel px-2 text-xs text-fg placeholder:text-subtle hover:border-muted focus:border-accent focus:outline-none';
+const option = 'flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-hover active:bg-line disabled:cursor-not-allowed disabled:opacity-50';
 
 function Status({ children }: Readonly<{ children: ReactNode }>) {
   return <p className="px-2 py-1.5 text-xs text-subtle">{children}</p>;
@@ -244,7 +245,7 @@ export function SnoozePicker({ onPick }: Readonly<{ onPick: (endTime: string) =>
           <button
             key={preset.minutes}
             type="button"
-            className="h-7 rounded-md border border-line-strong text-xs font-medium hover:bg-hover"
+            className="h-7 rounded-md border border-line-strong text-xs font-medium hover:bg-hover active:bg-line"
             onClick={() => onPick(new Date(Date.now() + preset.minutes * 60_000).toISOString())}
           >
             {preset.label}
@@ -259,7 +260,7 @@ export function SnoozePicker({ onPick }: Readonly<{ onPick: (endTime: string) =>
         }}
       >
         <input type="datetime-local" aria-label="Snooze until" value={custom} min={localInputValue(Date.now())} onChange={(e) => setCustom(e.target.value)} className={input} />
-        <button type="submit" disabled={!Number.isFinite(customMs) || customMs < Date.now() + 60_000 || customMs > Date.now() + SNOOZE_MAX_DAYS * 86_400_000} className="h-7 flex-none rounded-md bg-accent px-2 text-xs font-semibold text-on-accent disabled:opacity-50">
+        <button type="submit" disabled={!Number.isFinite(customMs) || customMs < Date.now() + 60_000 || customMs > Date.now() + SNOOZE_MAX_DAYS * 86_400_000} className={primaryButton}>
           Snooze
         </button>
       </form>

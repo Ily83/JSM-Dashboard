@@ -24,6 +24,26 @@ export function arrowToggles(item: TableItem | undefined, key: string): boolean 
   return false;
 }
 
+/** Pointer travel (px) before a press becomes a drag. */
+export const DRAG_THRESHOLD = 6;
+
+/**
+ * What a mouse drag from a row becomes once it passes the threshold:
+ * a rectangle selection when it starts in the checkbox column or goes mostly
+ * up or down, else native text selection (copying a host name from a
+ * summary). 'wait' until the pointer has moved far enough.
+ */
+export function dragMode(dx: number, dy: number, fromGutter: boolean, threshold = DRAG_THRESHOLD): 'wait' | 'rectangle' | 'text' {
+  if (Math.hypot(dx, dy) < threshold) return 'wait';
+  return fromGutter || Math.abs(dy) >= Math.abs(dx) ? 'rectangle' : 'text';
+}
+
+/** The row at a vertical position in the table's content (header included), clamped to the rows. */
+export function rowAtContentY(y: number, headerHeight: number, rowHeight: number, count: number): number {
+  if (count <= 0) return 0;
+  return Math.max(0, Math.min(count - 1, Math.floor((y - headerHeight) / rowHeight)));
+}
+
 /** How many of these alerts are selected. */
 export function countSelected(alerts: ReadonlyArray<{ id: string }>, selection: ReadonlySet<string>): number {
   return alerts.reduce((n, a) => n + (selection.has(a.id) ? 1 : 0), 0);

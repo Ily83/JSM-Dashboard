@@ -54,4 +54,8 @@ describe('time to acknowledge and close', () => {
   it('formats durations compactly', () => {
     expect([null, 45_000, 12 * M, 185 * M, 52 * 60 * M].map(formatDuration)).toEqual(['–', '45s', '12m', '3h 05m', '2d 4h']);
   });
+
+  it('switches to days at 24 hours, so one column never mixes "44h 02m" and "2d 0h"', () => {
+    expect([(23 * 60 + 59) * M, 24 * 60 * M, (44 * 60 + 2) * M, 48 * 60 * M].map(formatDuration)).toEqual(['23h 59m', '1d 0h', '1d 20h', '2d 0h']);
+  });
 });

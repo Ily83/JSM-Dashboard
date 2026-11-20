@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useSyncExternalStore } from 'react';
 import { Activity, Bookmark, CalendarDays, CheckCheck, CircleCheck, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Settings, Siren, Star, type LucideIcon } from 'lucide-react';
 import { SECTIONS, SECTION_IDS, type SectionId } from '../config/sections';
 import { cn } from '../lib/cn';
@@ -16,6 +16,8 @@ const ICONS: Record<SectionId, LucideIcon> = {
 interface SidebarProps {
   route: Route;
   counts: Record<SectionId, number>;
+  /** False until the alert list has been loaded once: counts are unknown, not zero. */
+  countsKnown: boolean;
   collapsed: boolean;
   onToggle: () => void;
   views: SavedView[];
@@ -30,7 +32,24 @@ const item = (active: boolean, collapsed: boolean) =>
     active ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-hover hover:text-fg',
   );
 
-export const Sidebar = memo(function Sidebar({ route, counts, collapsed, onToggle, views, activeViewId, defaultViewId }: SidebarProps) {
+/** Below Tailwind's `md` breakpoint (48rem), as `max-md:` in class names. */
+const NARROW_SCREEN = '(width < 48rem)';
+
+function subscribeNarrowScreen(onChange: () => void): () => void {
+  const media = window.matchMedia(NARROW_SCREEN);
+  media.addEventListener('change', onChange);
+  return () => media.removeEventListener('change', onChange);
+}
+
+const isNarrowScreen = () => window.matchMedia(NARROW_SCREEN).matches;
+
+export const Sidebar = memo(function Sidebar({ route, counts, countsKnown, collapsed: collapsedPreference, onToggle, views, activeViewId, defaultViewId }: SidebarProps) {
+  // Narrow screens get the icon rail whatever the preference, which still applies on wider ones.
+  const narrow = useSyncExternalStore(subscribeNarrowScreen, isNarrowScreen, () => false);
+  const collapsed = collapsedPreference || narrow;
+  // History does not load alerts (unless the P1 alarm polls them), and the first load takes a moment:
+  // until a list has arrived the counts are unknown, so none are shown rather than zeros.
+  const showCounts = countsKnown;
   const onAlerts = route.page === 'alerts';
   return (
     <nav
@@ -56,7 +75,7 @@ export const Sidebar = memo(function Sidebar({ route, counts, collapsed, onToggl
                   href={`#/${id}`}
                   aria-current={active ? 'page' : undefined}
                   className={item(active, collapsed)}
-                  data-tip={collapsed ? `${SECTIONS[id].label} (${counts[id]})` : undefined}
+                  data-tip={collapsed ? `${SECTIONS[id].label}${showCounts ? ` (${counts[id]})` : ''}` : undefined}
                   data-tip-always=""
                   onClick={(event) => {
                     event.preventDefault();
@@ -67,9 +86,11 @@ export const Sidebar = memo(function Sidebar({ route, counts, collapsed, onToggl
                   {!collapsed && (
                     <>
                       <span className="min-w-0 flex-1 truncate">{SECTIONS[id].label}</span>
-                      <span className={cn('flex-none text-xs tabular-nums', id === 'critical' && counts.critical > 0 ? 'font-semibold text-crit' : 'text-subtle')}>
-                        {counts[id]}
-                      </span>
+                      {showCounts && (
+                        <span className={cn('flex-none text-xs tabular-nums', id === 'critical' && counts.critical > 0 ? 'font-semibold text-crit' : 'text-subtle')}>
+                          {counts[id]}
+                        </span>
+                      )}
                     </>
                   )}
                 </a>
@@ -139,10 +160,13 @@ export const Sidebar = memo(function Sidebar({ route, counts, collapsed, onToggl
           <Settings size={16} aria-hidden className="flex-none" />
           {!collapsed && 'Settings'}
         </a>
-        <button type="button" onClick={onToggle} aria-expanded={!collapsed} className={item(false, collapsed)} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-          {collapsed ? <PanelLeftOpen size={16} aria-hidden /> : <PanelLeftClose size={16} aria-hidden className="flex-none" />}
-          {!collapsed && 'Collapse'}
-        </button>
+        {/* No toggle where the rail is forced: it would change nothing on this screen. */}
+        {!narrow && (
+          <button type="button" onClick={onToggle} aria-expanded={!collapsed} className={item(false, collapsed)} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+            {collapsed ? <PanelLeftOpen size={16} aria-hidden /> : <PanelLeftClose size={16} aria-hidden className="flex-none" />}
+            {!collapsed && 'Collapse'}
+          </button>
+        )}
       </div>
     </nav>
   );
