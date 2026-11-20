@@ -13,7 +13,7 @@ import {
   type HistoryInvestigation,
   type InvestigationInput,
 } from '../state/historyInvestigations';
-import { Popover } from './ui/Popover';
+import { Popover, type PopoverTriggerProps } from './ui/Popover';
 
 interface Props {
   current: InvestigationInput;
@@ -24,8 +24,28 @@ interface Props {
 
 const iconButton = 'flex-none rounded p-1 text-subtle hover:bg-hover hover:text-fg';
 
+/** The menu button: the open investigation's name, and a dot once it was changed. */
+function renderInvestigationsButton(props: PopoverTriggerProps, open: boolean, active: HistoryInvestigation | null, modified: boolean) {
+  return (
+    <button
+      type="button"
+      {...props}
+      data-tip="Saved investigations"
+      data-tip-always=""
+      className={cn(
+        'flex h-7 max-w-56 items-center gap-1.5 rounded-md border px-2 text-xs font-medium',
+        open ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg',
+      )}
+    >
+      <FolderOpen size={14} aria-hidden className={cn('flex-none', active && 'text-accent')} />
+      <span className="truncate">{active ? active.name : 'Investigations'}</span>
+      {modified && <span className="flex-none text-warn" aria-label="modified">•</span>}
+    </button>
+  );
+}
+
 /** Save the current History analysis under a name, and open, rename or delete saved ones. */
-export function HistoryInvestigationsMenu({ current, activeId, onOpen, onActiveChange }: Props) {
+export function HistoryInvestigationsMenu({ current, activeId, onOpen, onActiveChange }: Readonly<Props>) {
   const { saved } = useStore(historyStore);
   const [name, setName] = useState('');
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
@@ -39,22 +59,7 @@ export function HistoryInvestigationsMenu({ current, activeId, onOpen, onActiveC
       align="end"
       className="w-80"
       onOpenChange={(open) => !open && setRenaming(null)}
-      trigger={(props, open) => (
-        <button
-          type="button"
-          {...props}
-          data-tip="Saved investigations"
-          data-tip-always=""
-          className={cn(
-            'flex h-7 max-w-56 items-center gap-1.5 rounded-md border px-2 text-xs font-medium',
-            open ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg',
-          )}
-        >
-          <FolderOpen size={14} aria-hidden className={cn('flex-none', active && 'text-accent')} />
-          <span className="truncate">{active ? active.name : 'Investigations'}</span>
-          {modified && <span className="flex-none text-warn" aria-label="modified">•</span>}
-        </button>
-      )}
+      trigger={(props, open) => renderInvestigationsButton(props, open, active, modified)}
     >
       {(close) => (
         <div className="flex max-h-[70vh] flex-col">

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode, type MouseEvent } from 'react';
 import { getCoreRowModel, getSortedRowModel, useReactTable, type Header, type SortingState, type Updater } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, ChevronRight, Copy } from 'lucide-react';
@@ -14,6 +14,7 @@ import { useStore } from '../../lib/store';
 import type { Density } from '../../state/prefs';
 import { tableLayoutStore, type TableLayout } from '../../state/tableLayout';
 import { COLUMNS, renderCell, type CellOptions } from './columns';
+import { arrowToggles, checkState, countSelected, navigationTarget } from './tableHelpers';
 
 /**
  * The alert table.
@@ -185,7 +186,7 @@ export const AlertTable = memo(function AlertTable({
       const to = range && lastChecked.current !== null ? Math.max(lastChecked.current, index) : index;
       const next = new Set(current);
       for (let i = from; i <= to; i += 1) {
-        for (const alert of alertsOfItem(list[i]!)) {
+        for (const alert of alertsOfItem(list[i])) {
           if (turnOn) next.add(alert.id);
           else next.delete(alert.id);
         }
@@ -197,7 +198,7 @@ export const AlertTable = memo(function AlertTable({
   );
 
   const allAlerts = rows.length;
-  const selectedHere = selectable ? rows.reduce((n, r) => n + (selection!.has(r.id) ? 1 : 0), 0) : 0;
+  const selectedHere = selectable ? countSelected(rows, selection) : 0;
   const headerChecked = allAlerts > 0 && selectedHere === allAlerts;
   const headerMixed = selectedHere > 0 && !headerChecked;
 
@@ -236,43 +237,44 @@ export const AlertTable = memo(function AlertTable({
     if (followFocus && item?.kind === 'alert') onSelect(item.alert.id);
   };
 
+  const toggleItem = (item: TableItem | undefined) => {
+    if (item?.kind === 'group') toggleGroup(item.key);
+    else if (item?.kind === 'lane') toggleLane(item.key);
+  };
+
+  /** Enter or Space: an alert row opens, a group or lane row expands or collapses. */
+  const activateItem = (item: TableItem | undefined, index: number) => {
+    if (item?.kind === 'alert') handleSelect(item.alert.id, index);
+    else toggleItem(item);
+  };
+
   const onBodyKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const rowElement = (event.target as HTMLElement).closest<HTMLElement>('[data-index]');
     if (!rowElement) return;
     const index = Number(rowElement.dataset.index);
     const page = Math.max(1, Math.floor((scrollRef.current?.clientHeight ?? 300) / rowHeight) - 2);
-    const moves: Record<string, number> = {
-      ArrowDown: index + 1,
-      ArrowUp: index - 1,
-      PageDown: index + page,
-      PageUp: index - page,
-      Home: 0,
-      End: items.length - 1,
-    };
+    const target = navigationTarget(event.key, index, page, items.length);
     const item = items[index];
-    if (event.key in moves) {
+    if (target !== undefined) {
       event.preventDefault();
-      focusRow(moves[event.key]!);
+      focusRow(target);
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      if (item?.kind === 'group') toggleGroup(item.key);
-      else if (item?.kind === 'lane') toggleLane(item.key);
-      else if (item) handleSelect(item.alert.id, index);
-    } else if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && item?.kind === 'group') {
-      if (item.expanded !== (event.key === 'ArrowRight')) {
-        event.preventDefault();
-        toggleGroup(item.key);
-      }
-    } else if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && item?.kind === 'lane') {
-      if (item.collapsed === (event.key === 'ArrowRight')) {
-        event.preventDefault();
-        toggleLane(item.key);
-      }
+      activateItem(item, index);
+    } else if (arrowToggles(item, event.key)) {
+      event.preventDefault();
+      toggleItem(item);
     } else if ((event.key === 'x' || event.key === 'X') && selectable && !event.ctrlKey && !event.metaKey) {
       event.preventDefault();
       onCheck(index, event.shiftKey);
     }
   };
+
+  // Each row gets the same keyboard handling, through one stable function so
+  // the memoised rows do not re-render when the handler's closure changes.
+  const keyHandler = useRef(onBodyKeyDown);
+  keyHandler.current = onBodyKeyDown;
+  const onRowKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => keyHandler.current(event), []);
 
   // ---- Column reordering by dragging a header --------------------------
   const [drag, setDrag] = useState<{ from: ColumnId; over: ColumnId | null; side: 'before' | 'after' } | null>(null);
@@ -310,7 +312,7 @@ export const AlertTable = memo(function AlertTable({
       aria-colcount={headers.length + (selectable ? 1 : 0)}
       aria-multiselectable={selectable || undefined}
       className={cn('relative min-h-0 flex-1 overflow-auto bg-panel', isResizing && 'cursor-col-resize select-none')}
-      style={sizeVars as CSSProperties}
+      style={sizeVars}
     >
       <div role="row" aria-rowindex={1} className="at-header" style={{ height: HEADER_HEIGHT, width: 'var(--table-width)', minWidth: '100%' }}>
         {selectable && (
@@ -323,7 +325,7 @@ export const AlertTable = memo(function AlertTable({
                 if (el) el.indeterminate = headerMixed;
               }}
               disabled={allAlerts === 0}
-              onChange={() => onSelectionChange!(headerChecked ? new Set() : new Set(rows.map((r) => r.id)))}
+              onChange={() => onSelectionChange(headerChecked ? new Set() : new Set(rows.map((r) => r.id)))}
               data-tip={headerChecked ? 'Clear selection' : 'Select all'}
               data-tip-always=""
             />
@@ -333,7 +335,7 @@ export const AlertTable = memo(function AlertTable({
           <HeaderCell
             key={header.id}
             header={header}
-            drop={drag && drag.over === header.id && drag.from !== header.id ? drag.side : undefined}
+            drop={drag?.over === header.id && drag.from !== header.id ? drag.side : undefined}
             onDragStart={(event) => {
               event.dataTransfer.effectAllowed = 'move';
               event.dataTransfer.setData('text/plain', header.id);
@@ -359,10 +361,9 @@ export const AlertTable = memo(function AlertTable({
           role="rowgroup"
           className="relative"
           style={{ height: virtualizer.getTotalSize(), width: 'var(--table-width)', minWidth: '100%' }}
-          onKeyDown={onBodyKeyDown}
         >
           {virtualRows.map((virtual) => {
-            const item = items[virtual.index]!;
+            const item = items[virtual.index];
             const common = {
               index: virtual.index,
               top: virtual.start - HEADER_HEIGHT,
@@ -371,10 +372,11 @@ export const AlertTable = memo(function AlertTable({
               columns: rowColumns,
               options: cellOptions,
               onCheck: selectable ? onCheck : undefined,
+              onKeyDown: onRowKeyDown,
             };
             const key = itemKey(item);
             if (item.kind === 'lane') {
-              const count = selectable ? item.alerts.reduce((n, a) => n + (selection!.has(a.id) ? 1 : 0), 0) : 0;
+              const count = selectable ? countSelected(item.alerts, selection) : 0;
               return (
                 <LaneRow
                   key={key}
@@ -388,14 +390,14 @@ export const AlertTable = memo(function AlertTable({
                   p1={item.p1}
                   priority={item.priority}
                   collapsed={item.collapsed}
-                  checked={count === 0 ? false : count === item.alerts.length ? true : 'mixed'}
+                  checked={checkState(count, item.alerts.length)}
                   onToggle={toggleLane}
                 />
               );
             }
             if (item.kind === 'group') {
               const members = item.group.alerts;
-              const count = selectable ? members.reduce((n, a) => n + (selection!.has(a.id) ? 1 : 0), 0) : 0;
+              const count = selectable ? countSelected(members, selection) : 0;
               return (
                 <GroupRow
                   key={key}
@@ -404,7 +406,7 @@ export const AlertTable = memo(function AlertTable({
                   group={item.group}
                   summary={item.summary}
                   expanded={item.expanded}
-                  checked={count === 0 ? false : count === members.length ? true : 'mixed'}
+                  checked={checkState(count, members.length)}
                   critical={highlightCritical && isCritical(item.summary)}
                   activityEnd={activityEnd}
                   onToggle={toggleGroup}
@@ -419,7 +421,7 @@ export const AlertTable = memo(function AlertTable({
                 child={item.child}
                 alsoIn={item.alsoIn}
                 selected={item.alert.id === selectedId}
-                checked={selectable ? selection!.has(item.alert.id) : undefined}
+                checked={selectable ? selection.has(item.alert.id) : undefined}
                 critical={highlightCritical && isCritical(item.alert)}
                 onSelect={handleSelect}
               />
@@ -441,7 +443,11 @@ interface RowBaseProps {
   critical: boolean;
   /** Present when the selection column is shown. */
   onCheck?: (index: number, range: boolean) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 }
+
+/** Clicks in the selection cell tick the box; they must not also open or toggle the row. */
+const inSelectCell = (event: MouseEvent<HTMLElement>) => (event.target as HTMLElement).closest('.at-select') !== null;
 
 interface RowProps extends RowBaseProps {
   alert: Alert;
@@ -453,9 +459,9 @@ interface RowProps extends RowBaseProps {
   onSelect: (id: string, index: number) => void;
 }
 
-function SelectCell({ index, checked, label, onCheck }: { index: number; checked: boolean | 'mixed'; label: string; onCheck: (index: number, range: boolean) => void }) {
+function SelectCell({ index, checked, label, onCheck }: Readonly<{ index: number; checked: boolean | 'mixed'; label: string; onCheck: (index: number, range: boolean) => void }>) {
   return (
-    <div role="gridcell" className="at-cell at-select" style={{ width: SELECT_WIDTH }} onClick={(event) => event.stopPropagation()}>
+    <div role="gridcell" className="at-cell at-select" style={{ width: SELECT_WIDTH }}>
       <input
         type="checkbox"
         tabIndex={-1}
@@ -474,7 +480,8 @@ function SelectCell({ index, checked, label, onCheck }: { index: number; checked
   );
 }
 
-const Row = memo(function Row({ alert, child, alsoIn, index, top, height, selected, checked, tabbable, columns, options, critical, onSelect, onCheck }: RowProps) {
+const Row = memo(function Row({ alert, child, alsoIn, index, top, height, selected, checked, tabbable, columns, options, critical, onSelect, onCheck, onKeyDown }: RowProps) {
+  const name = alert.tinyId ? `#${alert.tinyId}` : alert.summary;
   return (
     <div
       role="row"
@@ -488,9 +495,10 @@ const Row = memo(function Row({ alert, child, alsoIn, index, top, height, select
       tabIndex={tabbable ? 0 : -1}
       className="at-row"
       style={{ transform: `translateY(${top}px)`, height, width: 'var(--table-width)' }}
-      onClick={() => onSelect(alert.id, index)}
+      onClick={(event) => !inSelectCell(event) && onSelect(alert.id, index)}
+      onKeyDown={onKeyDown}
     >
-      {onCheck && <SelectCell index={index} checked={checked ?? false} label={`Select alert ${alert.tinyId ? `#${alert.tinyId}` : alert.summary}`} onCheck={onCheck} />}
+      {onCheck && <SelectCell index={index} checked={checked ?? false} label={`Select alert ${name}`} onCheck={onCheck} />}
       {columns.map((column) => (
         <div
           key={column.id}
@@ -528,9 +536,34 @@ interface GroupRowProps extends RowBaseProps {
   onToggle: (key: string) => void;
 }
 
-/** One row standing for a group of repeated alerts; click to expand. */
-const GroupRow = memo(function GroupRow({ itemKey: key, group, summary, expanded, checked, activityEnd, index, top, height, tabbable, columns, options, critical, onToggle, onCheck }: GroupRowProps) {
+/** One cell of a group row: the summary column describes the group, the id column counts its alerts. */
+function GroupCellContent({
+  column,
+  group,
+  summary,
+  expanded,
+  activityEnd,
+  options,
+}: Readonly<{ column: RowColumn; group: AlertGroup; summary: Alert; expanded: boolean; activityEnd: number; options: CellOptions }>) {
+  if (column.id === 'tinyId') return <span className="truncate text-xs text-subtle">{group.records} alerts</span>;
+  if (column.id !== 'summary') return renderCell(column.id, summary, column.size, options);
   const tip = `${group.records} alert records · ${group.occurrences} occurrences\nGrouped by ${group.basis === 'alias' ? 'alias' : 'source and similar summary'}`;
+  return (
+    <>
+      <ChevronRight size={14} aria-hidden className={cn('flex-none text-muted transition-transform', expanded && 'rotate-90')} />
+      <span className="truncate font-medium" data-tip={summary.summary}>
+        {summary.summary}
+      </span>
+      <span className="flex-none rounded-full bg-accent-soft px-1.5 text-[11px] font-semibold leading-4 tabular-nums text-accent" data-tip={tip} data-tip-always="">
+        {group.records} alerts{options.showOccurrences && group.occurrences > group.records ? ` · ×${group.occurrences}` : ''}
+      </span>
+      <ActivityStrip alerts={group.alerts} end={activityEnd} />
+    </>
+  );
+}
+
+/** One row standing for a group of repeated alerts; click to expand. */
+const GroupRow = memo(function GroupRow({ itemKey: key, group, summary, expanded, checked, activityEnd, index, top, height, tabbable, columns, options, critical, onToggle, onCheck, onKeyDown }: GroupRowProps) {
   return (
     <div
       role="row"
@@ -543,27 +576,13 @@ const GroupRow = memo(function GroupRow({ itemKey: key, group, summary, expanded
       tabIndex={tabbable ? 0 : -1}
       className="at-row"
       style={{ transform: `translateY(${top}px)`, height, width: 'var(--table-width)' }}
-      onClick={() => onToggle(key)}
+      onClick={(event) => !inSelectCell(event) && onToggle(key)}
+      onKeyDown={onKeyDown}
     >
       {onCheck && <SelectCell index={index} checked={checked} label={`Select ${group.records} alerts in this group`} onCheck={onCheck} />}
       {columns.map((column) => (
         <div key={column.id} role="gridcell" className={cn('at-cell', column.id === 'count' && 'justify-end')} style={{ width: `calc(var(--w-${column.id}) * 1px)` }}>
-          {column.id === 'summary' ? (
-            <>
-              <ChevronRight size={14} aria-hidden className={cn('flex-none text-muted transition-transform', expanded && 'rotate-90')} />
-              <span className="truncate font-medium" data-tip={summary.summary}>
-                {summary.summary}
-              </span>
-              <span className="flex-none rounded-full bg-accent-soft px-1.5 text-[11px] font-semibold leading-4 tabular-nums text-accent" data-tip={tip} data-tip-always="">
-                {group.records} alerts{options.showOccurrences && group.occurrences > group.records ? ` · ×${group.occurrences}` : ''}
-              </span>
-              <ActivityStrip alerts={group.alerts} end={activityEnd} />
-            </>
-          ) : column.id === 'tinyId' ? (
-            <span className="truncate text-xs text-subtle">{group.records} alerts</span>
-          ) : (
-            renderCell(column.id, summary, column.size, options)
-          )}
+          <GroupCellContent column={column} group={group} summary={summary} expanded={expanded} activityEnd={activityEnd} options={options} />
         </div>
       ))}
     </div>
@@ -585,7 +604,7 @@ interface LaneRowProps extends Omit<RowBaseProps, 'critical' | 'columns' | 'opti
 }
 
 /** Header of one lane: name, most urgent priority, counts. Click to collapse. */
-const LaneRow = memo(function LaneRow({ laneKey, name, isNone, laneBy, total, shared, p1, priority, collapsed, checked, index, top, height, tabbable, onToggle, onCheck }: LaneRowProps) {
+const LaneRow = memo(function LaneRow({ laneKey, name, isNone, laneBy, total, shared, p1, priority, collapsed, checked, index, top, height, tabbable, onToggle, onCheck, onKeyDown }: LaneRowProps) {
   return (
     <div
       role="row"
@@ -596,7 +615,8 @@ const LaneRow = memo(function LaneRow({ laneKey, name, isNone, laneBy, total, sh
       tabIndex={tabbable ? 0 : -1}
       className="at-row"
       style={{ transform: `translateY(${top}px)`, height, width: 'var(--table-width)' }}
-      onClick={() => onToggle(laneKey)}
+      onClick={(event) => !inSelectCell(event) && onToggle(laneKey)}
+      onKeyDown={onKeyDown}
     >
       {onCheck && <SelectCell index={index} checked={checked} label={`Select ${total} alerts in ${name}`} onCheck={onCheck} />}
       <div role="gridcell" className="at-cell sticky left-0 min-w-0 flex-1">
@@ -635,7 +655,9 @@ interface HeaderCellProps {
   onResizeBy: (delta: number) => void;
 }
 
-function HeaderCell({ header, drop, onDragStart, onDragOver, onDrop, onDragEnd, onResizeBy }: HeaderCellProps) {
+const ARIA_SORT = { asc: 'ascending', desc: 'descending' } as const;
+
+function HeaderCell({ header, drop, onDragStart, onDragOver, onDrop, onDragEnd, onResizeBy }: Readonly<HeaderCellProps>) {
   const column = header.column;
   const id = header.id as ColumnId;
   const { label } = COLUMN_INFO[id];
@@ -646,7 +668,7 @@ function HeaderCell({ header, drop, onDragStart, onDragOver, onDrop, onDragEnd, 
   return (
     <div
       role="columnheader"
-      aria-sort={sorted === 'asc' ? 'ascending' : sorted === 'desc' ? 'descending' : 'none'}
+      aria-sort={sorted ? ARIA_SORT[sorted] : 'none'}
       aria-colindex={header.index + 1}
       className="at-th"
       data-sorted={sorted ? 'true' : undefined}

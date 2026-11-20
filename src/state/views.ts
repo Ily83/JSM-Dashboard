@@ -1,3 +1,4 @@
+import { randomId } from '../lib/id';
 import type { SortingState } from '@tanstack/react-table';
 import { isColumnId } from '../config/columns';
 import { NONE } from '../config/filterFields';
@@ -208,7 +209,7 @@ export function isViewModified(view: SavedView, section: SectionId, current: Vie
 // ---- Saved views ------------------------------------------------------------
 
 export function newId(): string {
-  return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `view-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return randomId('view');
 }
 
 export function uniqueName(name: string, saved: readonly SavedView[], ignoreId?: string): string {
@@ -311,7 +312,7 @@ export function moveView(id: string, delta: -1 | 1): void {
     const from = saved.findIndex((v) => v.id === id);
     const to = from + delta;
     if (from < 0 || to < 0 || to >= saved.length) return data;
-    [saved[from], saved[to]] = [saved[to]!, saved[from]!];
+    [saved[from], saved[to]] = [saved[to], saved[from]];
     return { ...data, saved };
   });
 }
@@ -319,6 +320,6 @@ export function moveView(id: string, delta: -1 | 1): void {
 /** Called once at start-up: opening the application without an address shows the default view. */
 export function applyDefaultViewOnStart(): void {
   const { defaultViewId } = viewsStore.get();
-  const hash = window.location.hash.replace(/^#\/?/, '');
+  const hash = globalThis.location.hash.replace(/^#\/?/, '');
   if (defaultViewId && hash === '') applyView(defaultViewId);
 }

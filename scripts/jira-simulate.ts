@@ -50,12 +50,87 @@ function body(runId: string, key: string, alert: SimAlert, teamId: string | null
   };
 }
 
+/** What one simulation run remembers between steps. */
+interface RunState {
+  runId: string;
+  teamId: string | null;
+  /** Step key -> Jira alert id, once Jira confirmed the alert. */
+  ids: Map<string, string>;
+  /** Step key -> the alert as first sent, for repeats. */
+  bodies: Map<string, CreateAlertBody>;
+}
+
+async function sendAlert(state: RunState, step: Extract<Step, { kind: 'create' | 'repeat' }>): Promise<string> {
+  const request = step.kind === 'create' ? body(state.runId, step.key, step.alert, state.teamId) : state.bodies.get(step.key);
+  if (!request) return `repeat ${step.key}: not created yet`;
+  state.bodies.set(step.key, request);
+  const result = await client.createAlert(request);
+  if (result.alertId) state.ids.set(step.key, result.alertId);
+  const verb = step.kind === 'create' ? 'created' : 'sent again';
+  const confirmation = result.alertId ? '' : ' (not confirmed yet)';
+  return `${verb} ${request.priority} ${request.message.slice(0, 70)}${confirmation}`;
+}
+
+async function ackOrClose(state: RunState, step: Extract<Step, { kind: 'ack' | 'close' }>): Promise<string> {
+  const id = state.ids.get(step.key);
+  if (!id) return `${step.kind} ${step.key}: unknown alert`;
+  const ack = step.kind === 'ack';
+  await client.performAction(id, { action: ack ? 'acknowledge' : 'close' });
+  return `${ack ? 'acknowledged' : 'closed'} ${step.key}`;
+}
+
+async function addNote(state: RunState, step: Extract<Step, { kind: 'note' }>): Promise<string> {
+  const id = state.ids.get(step.key);
+  if (!id) return `note ${step.key}: unknown alert`;
+  await client.performAction(id, { action: 'addNote', note: step.note });
+  return `note on ${step.key}`;
+}
+
+async function startHeartbeat(teamId: string | null): Promise<string> {
+  if (!teamId) return 'heartbeat skipped: the site has no Operations team';
+  await client.deleteHeartbeat(teamId, SIM_HEARTBEAT).catch(() => undefined);
+  await client.createHeartbeat(teamId, {
+    name: SIM_HEARTBEAT,
+    description: 'Created by the Alert Center simulation; stops being pinged on purpose.',
+    interval: 1,
+    intervalUnit: 'minutes',
+    enabled: true,
+    alertMessage: 'Heartbeat alert-center-sim stopped reporting',
+    alertTags: [SIM_TAG],
+    alertPriority: 'P2',
+  });
+  await client.pingHeartbeat(teamId, SIM_HEARTBEAT);
+  return `heartbeat ${SIM_HEARTBEAT} created (1 minute interval) and pinged`;
+}
+
+async function pingHeartbeat(teamId: string | null): Promise<string> {
+  if (!teamId) return 'heartbeat ping skipped';
+  await client.pingHeartbeat(teamId, SIM_HEARTBEAT);
+  return 'heartbeat pinged';
+}
+
+/** Runs one step and describes what happened. */
+function execute(state: RunState, step: Step): Promise<string> {
+  switch (step.kind) {
+    case 'create':
+    case 'repeat':
+      return sendAlert(state, step);
+    case 'ack':
+    case 'close':
+      return ackOrClose(state, step);
+    case 'note':
+      return addNote(state, step);
+    case 'heartbeat-start':
+      return startHeartbeat(state.teamId);
+    case 'heartbeat-ping':
+      return pingHeartbeat(state.teamId);
+  }
+}
+
 async function run(): Promise<void> {
-  const runId = Date.now().toString(36);
-  const teamId = await firstTeam();
+  const state: RunState = { runId: Date.now().toString(36), teamId: await firstTeam(), ids: new Map(), bodies: new Map() };
+  const { runId, teamId } = state;
   const steps = buildScenario();
-  const ids = new Map<string, string>();
-  const bodies = new Map<string, CreateAlertBody>();
   const started = Date.now();
   const clock = () => {
     const s = Math.round((Date.now() - started) / 1000);
@@ -67,60 +142,13 @@ async function run(): Promise<void> {
     const wait = started + step.at / speed - Date.now();
     if (wait > 0) await sleep(wait);
     try {
-      console.log(`[${clock()}] ${await execute(step)}`);
+      console.log(`[${clock()}] ${await execute(state, step)}`);
     } catch (error) {
-      console.log(`[${clock()}] ${step.kind}${'key' in step ? ` ${step.key}` : ''}: ${errorText(error)}`);
+      const key = 'key' in step ? ` ${step.key}` : '';
+      console.log(`[${clock()}] ${step.kind}${key}: ${errorText(error)}`);
     }
   }
   console.log(`Done. The heartbeat stays expired until "npm run jira:simulate -- cleanup --yes".`);
-
-  async function execute(step: Step): Promise<string> {
-    switch (step.kind) {
-      case 'create':
-      case 'repeat': {
-        const request = step.kind === 'create' ? body(runId, step.key, step.alert, teamId) : bodies.get(step.key);
-        if (!request) return `repeat ${step.key}: not created yet`;
-        bodies.set(step.key, request);
-        const result = await client.createAlert(request);
-        if (result.alertId) ids.set(step.key, result.alertId);
-        return `${step.kind === 'create' ? 'created' : 'sent again'} ${request.priority} ${request.message.slice(0, 70)}${result.alertId ? '' : ' (not confirmed yet)'}`;
-      }
-      case 'ack':
-      case 'close': {
-        const id = ids.get(step.key);
-        if (!id) return `${step.kind} ${step.key}: unknown alert`;
-        await client.performAction(id, { action: step.kind === 'ack' ? 'acknowledge' : 'close' });
-        return `${step.kind === 'ack' ? 'acknowledged' : 'closed'} ${step.key}`;
-      }
-      case 'note': {
-        const id = ids.get(step.key);
-        if (!id) return `note ${step.key}: unknown alert`;
-        await client.performAction(id, { action: 'addNote', note: step.note });
-        return `note on ${step.key}`;
-      }
-      case 'heartbeat-start': {
-        if (!teamId) return 'heartbeat skipped: the site has no Operations team';
-        await client.deleteHeartbeat(teamId, SIM_HEARTBEAT).catch(() => undefined);
-        await client.createHeartbeat(teamId, {
-          name: SIM_HEARTBEAT,
-          description: 'Created by the Alert Center simulation; stops being pinged on purpose.',
-          interval: 1,
-          intervalUnit: 'minutes',
-          enabled: true,
-          alertMessage: 'Heartbeat alert-center-sim stopped reporting',
-          alertTags: [SIM_TAG],
-          alertPriority: 'P2',
-        });
-        await client.pingHeartbeat(teamId, SIM_HEARTBEAT);
-        return `heartbeat ${SIM_HEARTBEAT} created (1 minute interval) and pinged`;
-      }
-      case 'heartbeat-ping': {
-        if (!teamId) return 'heartbeat ping skipped';
-        await client.pingHeartbeat(teamId, SIM_HEARTBEAT);
-        return 'heartbeat pinged';
-      }
-    }
-  }
 }
 
 async function cleanup(): Promise<void> {
@@ -152,7 +180,8 @@ async function cleanup(): Promise<void> {
 }
 
 try {
-  await (command === 'run' ? run() : cleanup());
+  if (command === 'run') await run();
+  else await cleanup();
 } catch (error) {
   fail(errorText(error));
 }

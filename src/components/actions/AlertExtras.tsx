@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { ChevronRight, Download, Loader2, Plus, X } from 'lucide-react';
-import { NOTE_MAX_LENGTH, TAG_MAX_LENGTH, type AlertAction } from '../../../shared/actions';
+import { NOTE_MAX_LENGTH, TAG_MAX_LENGTH, type AlertAction, type AlertNote } from '../../../shared/actions';
 import { fetchAttachmentUrl } from '../../api/client';
 import { useAttachments, useLogs, useNotes } from '../../api/hooks';
 import { formatAbsolute, formatRelative } from '../../lib/format';
@@ -16,7 +16,7 @@ import { Linkify } from '../ui/Linkify';
 
 const heading = 'text-[11px] font-semibold uppercase tracking-wide text-muted';
 
-function When({ ms }: { ms: number | null }) {
+function When({ ms }: Readonly<{ ms: number | null }>) {
   const now = useNow();
   if (!ms) return null;
   return (
@@ -36,7 +36,7 @@ function Loading() {
 }
 
 /** A section whose content is only loaded once it is opened. */
-function Collapsible({ title, children }: { title: string; children: (open: boolean) => ReactNode }) {
+function Collapsible({ title, children }: Readonly<{ title: string; children: (open: boolean) => ReactNode }>) {
   const [open, setOpen] = useState(false);
   return (
     <section className="border-t border-line px-4 py-3">
@@ -49,7 +49,31 @@ function Collapsible({ title, children }: { title: string; children: (open: bool
   );
 }
 
-export function NotesSection({ alertId, canAdd, run, busy }: { alertId: string; canAdd: boolean; run: (action: AlertAction) => Promise<boolean>; busy: boolean }) {
+/** The notes under the add field: loading, error, nothing yet, or the list. */
+function NoteList({ pending, error, values, canAdd }: Readonly<{ pending: boolean; error: Error | null; values: AlertNote[]; canAdd: boolean }>) {
+  if (pending) return <Loading />;
+  if (error) return <p className="text-xs text-warn">{error.message}</p>;
+  if (values.length === 0) return canAdd ? null : <span className="text-subtle">–</span>;
+  return (
+    <ul className="grid gap-2">
+      {values.map((note) => (
+        <li key={note.id} className="rounded-md bg-raised px-2.5 py-1.5">
+          <div className="flex items-center gap-1.5 text-[11px]">
+            <span className="truncate font-medium text-muted">{note.owner ?? 'Unknown'}</span>
+            <span className="ml-auto flex-none">
+              <When ms={note.createdAt} />
+            </span>
+          </div>
+          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed">
+            <Linkify text={note.note} />
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function NotesSection({ alertId, canAdd, run, busy }: Readonly<{ alertId: string; canAdd: boolean; run: (action: AlertAction) => Promise<boolean>; busy: boolean }>) {
   const notes = useNotes(alertId);
   const [draft, setDraft] = useState('');
   const values = notes.data?.values ?? [];
@@ -88,34 +112,12 @@ export function NotesSection({ alertId, canAdd, run, busy }: { alertId: string; 
           )}
         </form>
       )}
-      {notes.isPending ? (
-        <Loading />
-      ) : notes.error ? (
-        <p className="text-xs text-warn">{notes.error.message}</p>
-      ) : values.length === 0 ? (
-        !canAdd && <span className="text-subtle">–</span>
-      ) : (
-        <ul className="grid gap-2">
-          {values.map((note) => (
-            <li key={note.id} className="rounded-md bg-raised px-2.5 py-1.5">
-              <div className="flex items-center gap-1.5 text-[11px]">
-                <span className="truncate font-medium text-muted">{note.owner ?? 'Unknown'}</span>
-                <span className="ml-auto flex-none">
-                  <When ms={note.createdAt} />
-                </span>
-              </div>
-              <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed">
-                <Linkify text={note.note} />
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
+      <NoteList pending={notes.isPending} error={notes.error} values={values} canAdd={canAdd} />
     </section>
   );
 }
 
-function ActivityList({ alertId }: { alertId: string }) {
+function ActivityList({ alertId }: Readonly<{ alertId: string }>) {
   const logs = useLogs(alertId, true);
   if (logs.isPending) return <Loading />;
   if (logs.error) return <p className="text-xs text-warn">{logs.error.message}</p>;
@@ -135,11 +137,11 @@ function ActivityList({ alertId }: { alertId: string }) {
   );
 }
 
-export function ActivitySection({ alertId }: { alertId: string }) {
+export function ActivitySection({ alertId }: Readonly<{ alertId: string }>) {
   return <Collapsible title="Activity">{() => <ActivityList alertId={alertId} />}</Collapsible>;
 }
 
-function AttachmentList({ alertId }: { alertId: string }) {
+function AttachmentList({ alertId }: Readonly<{ alertId: string }>) {
   const attachments = useAttachments(alertId, true);
   const [error, setError] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
@@ -159,7 +161,7 @@ function AttachmentList({ alertId }: { alertId: string }) {
         tab.opener = null;
         tab.location.href = url;
       } else {
-        window.location.assign(url);
+        globalThis.location.assign(url);
       }
     } catch (e) {
       tab?.close();
@@ -189,7 +191,7 @@ function AttachmentList({ alertId }: { alertId: string }) {
   );
 }
 
-export function AttachmentsSection({ alertId }: { alertId: string }) {
+export function AttachmentsSection({ alertId }: Readonly<{ alertId: string }>) {
   return <Collapsible title="Attachments">{() => <AttachmentList alertId={alertId} />}</Collapsible>;
 }
 
@@ -200,13 +202,13 @@ export function TagEditor({
   canRemove,
   run,
   busy,
-}: {
+}: Readonly<{
   tags: string[];
   canAdd: boolean;
   canRemove: boolean;
   run: (action: AlertAction) => Promise<boolean>;
   busy: boolean;
-}) {
+}>) {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState('');
 

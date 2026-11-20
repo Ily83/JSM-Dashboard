@@ -4,11 +4,29 @@ import { SECTIONS, type SectionId } from '../config/sections';
 import { cn } from '../lib/cn';
 import { navigate } from '../lib/router';
 import { useStore } from '../lib/store';
-import { applyView, isViewModified, saveViewAs, setDefaultView, updateView, viewsStore } from '../state/views';
-import { Popover } from './ui/Popover';
+import { applyView, isViewModified, saveViewAs, setDefaultView, updateView, viewsStore, type SavedView } from '../state/views';
+import { Popover, type PopoverTriggerProps } from './ui/Popover';
+
+/** The menu button: the active view's name, and a dot once it was changed. */
+function renderViewsButton(props: PopoverTriggerProps, open: boolean, active: SavedView | null, modified: boolean) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={cn(
+        'flex h-7 max-w-56 items-center gap-1.5 rounded-md border px-2 text-xs font-medium',
+        open ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg',
+      )}
+    >
+      <Bookmark size={14} aria-hidden className={cn('flex-none', active && 'fill-current text-accent')} />
+      <span className="truncate">{active ? active.name : 'Views'}</span>
+      {modified && <span className="flex-none text-warn" aria-label="modified">•</span>}
+    </button>
+  );
+}
 
 /** Apply a saved view, save the current one, or save it under a new name. Full management is in Settings. */
-export function ViewsMenu({ section }: { section: SectionId }) {
+export function ViewsMenu({ section }: Readonly<{ section: SectionId }>) {
   const views = useStore(viewsStore);
   const [name, setName] = useState('');
   const [includeLayout, setIncludeLayout] = useState(false);
@@ -21,20 +39,7 @@ export function ViewsMenu({ section }: { section: SectionId }) {
       label="Saved views"
       align="end"
       className="w-72"
-      trigger={(props, open) => (
-        <button
-          type="button"
-          {...props}
-          className={cn(
-            'flex h-7 max-w-56 items-center gap-1.5 rounded-md border px-2 text-xs font-medium',
-            open ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg',
-          )}
-        >
-          <Bookmark size={14} aria-hidden className={cn('flex-none', active && 'fill-current text-accent')} />
-          <span className="truncate">{active ? active.name : 'Views'}</span>
-          {modified && <span className="flex-none text-warn" aria-label="modified">•</span>}
-        </button>
-      )}
+      trigger={(props, open) => renderViewsButton(props, open, active, modified)}
     >
       {(close) => (
         <div className="flex max-h-[70vh] flex-col">
@@ -118,7 +123,7 @@ export function ViewsMenu({ section }: { section: SectionId }) {
               </div>
               <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
                 <input type="checkbox" className="size-3.5 accent-(--accent)" checked={includeLayout} onChange={(event) => setIncludeLayout(event.target.checked)} />
-                Include columns and dashboard layout
+                {'Include columns and dashboard layout'}
               </label>
             </form>
             <button

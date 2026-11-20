@@ -74,7 +74,7 @@ function rowsFor(alerts: Alert[], lane: string | null, options: BuildOptions, al
   }
   for (const group of groupAlerts(alerts)) {
     if (group.records === 1) {
-      const alert = group.alerts[0]!;
+      const alert = group.alerts[0];
       out.push({ kind: 'alert', alert, child: false, lane, alsoIn: alsoIn(alert) });
       continue;
     }
@@ -98,13 +98,19 @@ export function buildTableItems(sorted: readonly Alert[], options: BuildOptions)
     const values = laneValues(alert, laneBy);
     if (values.length === 0) {
       let lane = lanes.get(NONE_KEY);
-      if (!lane) lanes.set(NONE_KEY, (lane = { name: NONE_LABEL[laneBy], alerts: [] }));
+      if (!lane) {
+        lane = { name: NONE_LABEL[laneBy], alerts: [] };
+        lanes.set(NONE_KEY, lane);
+      }
       lane.alerts.push(alert);
       continue;
     }
     for (const value of new Set(values)) {
       let lane = lanes.get(value);
-      if (!lane) lanes.set(value, (lane = { name: value, alerts: [] }));
+      if (!lane) {
+        lane = { name: value, alerts: [] };
+        lanes.set(value, lane);
+      }
       lane.alerts.push(alert);
     }
   }

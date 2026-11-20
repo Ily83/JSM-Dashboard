@@ -20,7 +20,7 @@ interface DetailPanelProps {
   onClose: () => void;
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
   return (
     <>
       <dt className="py-1 text-xs text-muted">{label}</dt>
@@ -29,7 +29,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, children }: Readonly<{ title: string; children: ReactNode }>) {
   return (
     <section className="border-t border-line px-4 py-3">
       <h3 className="pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted">{title}</h3>
@@ -38,7 +38,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function Time({ ms }: { ms: number | null }) {
+function Time({ ms }: Readonly<{ ms: number | null }>) {
   const now = useNow();
   if (!ms) return <span className="text-subtle">–</span>;
   return (
@@ -48,7 +48,7 @@ function Time({ ms }: { ms: number | null }) {
   );
 }
 
-function CopyButton({ value, label }: { value: string; label: string }) {
+function CopyButton({ value, label }: Readonly<{ value: string; label: string }>) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -71,7 +71,77 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
-export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
+function WatchButton({ id, watched }: Readonly<{ id: string; watched: boolean }>) {
+  return (
+    <button
+      type="button"
+      onClick={() => toggleWatch(id)}
+      aria-pressed={watched}
+      aria-label={watched ? 'Stop watching' : 'Watch'}
+      data-tip={watched ? 'Watching · W' : 'Watch · W'}
+      data-tip-always=""
+      className={watched ? 'flex-none rounded p-1 text-warn hover:bg-hover' : 'flex-none rounded p-1 text-muted hover:bg-hover hover:text-fg'}
+    >
+      <Star size={15} aria-hidden fill={watched ? 'currentColor' : 'none'} />
+    </button>
+  );
+}
+
+/** Opens the alert in Jira; disabled where there is no link (demo mode). */
+function JiraLink({ url, compact }: Readonly<{ url: string | null; compact: boolean }>) {
+  const text = compact ? 'Jira' : 'Open in Jira';
+  if (url) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Open in Jira"
+        data-tip="Open in Jira · O"
+        data-tip-always=""
+        className="flex h-7 items-center gap-1.5 rounded-md bg-accent px-2.5 text-xs font-semibold text-on-accent hover:opacity-90"
+      >
+        <ExternalLink size={13} aria-hidden />
+        {text}
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      disabled
+      data-tip="Not available in demo mode"
+      data-tip-always=""
+      aria-label="Open in Jira"
+      className="flex h-7 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-xs font-semibold text-subtle"
+    >
+      <ExternalLink size={13} aria-hidden />
+      {text}
+    </button>
+  );
+}
+
+function Description({ loading, text, error }: Readonly<{ loading: boolean; text: string | null | undefined; error: Error | null }>) {
+  if (loading) {
+    return (
+      <div className="grid gap-1.5" aria-busy="true">
+        <div className="skeleton h-3 w-full" />
+        <div className="skeleton h-3 w-11/12" />
+        <div className="skeleton h-3 w-2/3" />
+      </div>
+    );
+  }
+  if (text) {
+    return (
+      <p className="whitespace-pre-wrap break-words leading-relaxed">
+        <Linkify text={text} />
+      </p>
+    );
+  }
+  return <span className="text-subtle">{error ? error.message : '–'}</span>;
+}
+
+export function DetailPanel({ alert, alertId, onClose }: Readonly<DetailPanelProps>) {
   const detailQuery = useAlertDetail(alertId, alert?.updatedAt);
   const detail: AlertDetail | undefined = detailQuery.data;
   const allowed = useWriteActions();
@@ -161,47 +231,12 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
               <BookOpen size={15} aria-hidden />
             </a>
           )}
-          <button
-            type="button"
-            onClick={() => toggleWatch(base.id)}
-            aria-pressed={watched}
-            aria-label={watched ? 'Stop watching' : 'Watch'}
-            data-tip={watched ? 'Watching · W' : 'Watch · W'}
-            data-tip-always=""
-            className={watched ? 'flex-none rounded p-1 text-warn hover:bg-hover' : 'flex-none rounded p-1 text-muted hover:bg-hover hover:text-fg'}
-          >
-            <Star size={15} aria-hidden fill={watched ? 'currentColor' : 'none'} />
-          </button>
+          <WatchButton id={base.id} watched={watched} />
           {closeButton}
         </div>
         <h2 className="mt-2 break-words text-[15px] font-semibold leading-snug">{base.summary}</h2>
         <div className="mt-3 flex flex-wrap items-center gap-1">
-          {base.url ? (
-            <a
-              href={base.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open in Jira"
-              data-tip="Open in Jira · O"
-              data-tip-always=""
-              className="flex h-7 items-center gap-1.5 rounded-md bg-accent px-2.5 text-xs font-semibold text-on-accent hover:opacity-90"
-            >
-              <ExternalLink size={13} aria-hidden />
-              {compact ? 'Jira' : 'Open in Jira'}
-            </a>
-          ) : (
-            <button
-              type="button"
-              disabled
-              data-tip="Not available in demo mode"
-              data-tip-always=""
-              aria-label="Open in Jira"
-              className="flex h-7 items-center gap-1.5 rounded-md border border-line-strong px-2.5 text-xs font-semibold text-subtle"
-            >
-              <ExternalLink size={13} aria-hidden />
-              {compact ? 'Jira' : 'Open in Jira'}
-            </button>
-          )}
+          <JiraLink url={base.url} compact={compact} />
           {alertActionsOn && <AlertActions alert={base} allowed={allowed} run={runner.run} busy={runner.busy} customActions={detail?.actions ?? []} />}
         </div>
         <ActionFeedback state={runner.state} onDismiss={runner.dismiss} />
@@ -276,19 +311,7 @@ export function DetailPanel({ alert, alertId, onClose }: DetailPanelProps) {
         </Section>
 
         <Section title="Description">
-          {loading ? (
-            <div className="grid gap-1.5" aria-busy="true">
-              <div className="skeleton h-3 w-full" />
-              <div className="skeleton h-3 w-11/12" />
-              <div className="skeleton h-3 w-2/3" />
-            </div>
-          ) : detail?.description ? (
-            <p className="whitespace-pre-wrap break-words leading-relaxed">
-              <Linkify text={detail.description} />
-            </p>
-          ) : (
-            <span className="text-subtle">{detailQuery.error ? detailQuery.error.message : '–'}</span>
-          )}
+          <Description loading={loading} text={detail?.description} error={detailQuery.error} />
           {detail?.detailError && <p className="mt-2 text-xs text-warn">{detail.detailError}</p>}
         </Section>
 

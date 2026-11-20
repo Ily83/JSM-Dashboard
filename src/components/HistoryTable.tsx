@@ -3,7 +3,7 @@ import { PriorityBadge, StatusBadge } from './ui/badges';
 
 const created = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' });
 
-export function HistoryTable({ alerts }: { alerts: Alert[] }) {
+export function HistoryTable({ alerts }: Readonly<{ alerts: Alert[] }>) {
   return (
     <div className="min-h-0 flex-1 overflow-auto">
       <table className="w-full text-left text-sm">

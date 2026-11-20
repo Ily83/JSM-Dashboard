@@ -26,6 +26,12 @@ export interface AlertsData {
 
 const ALERTS_KEY = ['alerts'] as const;
 
+/** Milliseconds between polls: the auto-refresh setting, else every minute when polling must continue, else none. */
+function pollInterval(refreshSeconds: number, keepPollingInBackground: boolean): number | false {
+  if (refreshSeconds > 0) return refreshSeconds * 1000;
+  return keepPollingInBackground ? 60_000 : false;
+}
+
 /**
  * The alert list, polled in the background.
  *
@@ -53,7 +59,7 @@ export function useAlerts(refreshSeconds: number, enabled = true, keepPollingInB
     },
     // The P1 alarm needs polling to continue while the tab is hidden, and
     // even with auto-refresh off (then every 60 seconds).
-    refetchInterval: refreshSeconds > 0 ? refreshSeconds * 1000 : keepPollingInBackground ? 60_000 : false,
+    refetchInterval: pollInterval(refreshSeconds, keepPollingInBackground),
     refetchIntervalInBackground: keepPollingInBackground,
     refetchOnWindowFocus: true,
     staleTime: 10_000,
@@ -184,7 +190,7 @@ export function useSchedules(enabled = true) {
 
 export function useEscalations(teamIds: readonly string[], enabled = true) {
   return useQuery({
-    queryKey: ['directory', 'escalations', [...teamIds].sort().join(',')],
+    queryKey: ['directory', 'escalations', [...teamIds].sort((a, b) => a.localeCompare(b)).join(',')],
     queryFn: async ({ signal }) => {
       const lists = await Promise.all(teamIds.map((teamId) => fetchEscalations(teamId, signal).catch(() => [])));
       const byId = new Map(lists.flat().map((e) => [e.id, e]));

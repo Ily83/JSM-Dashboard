@@ -15,7 +15,7 @@ export function setLogLevel(level: Level): void {
 }
 
 const SECRET_PATTERNS: RegExp[] = [
-  /(Basic|Bearer)\s+[A-Za-z0-9+/=._-]{8,}/gi,
+  /(Basic|Bearer)\s+[a-z0-9+/=._-]{8,}/gi, // case-insensitive: the class covers A-Z too
   /ATATT[A-Za-z0-9+/=._-]{10,}/g, // Atlassian API token prefix
   /([?&](?:token|api[_-]?key|password|secret)=)[^&\s]+/gi,
 ];
@@ -36,7 +36,8 @@ function write(level: Level, message: string, fields?: Record<string, unknown>):
         .map(([k, v]) => `${k}=${typeof v === 'string' ? JSON.stringify(v) : String(v)}`)
         .join(' ')
     : '';
-  const line = redact(`${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} ${message}${extras ? ` ${extras}` : ''}`);
+  const suffix = extras ? ` ${extras}` : '';
+  const line = redact(`${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} ${message}${suffix}`);
   if (level === 'error' || level === 'warn') console.error(line);
   else console.log(line);
 }

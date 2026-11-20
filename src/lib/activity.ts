@@ -33,15 +33,15 @@ export function hourlyActivity(alerts: readonly Alert[], end: number, hours = 24
   const bucket = (time: number) => Math.floor((time - start) / HOUR_MS);
   for (const alert of alerts) {
     const c = bucket(alert.createdAt);
-    if (alert.createdAt > 0 && c >= 0 && c < hours) created[c]! += 1;
+    if (alert.createdAt > 0 && c >= 0 && c < hours) created[c] += 1;
     const occurred = alert.lastOccurredAt;
     if (occurred !== null && occurred - alert.createdAt > 60_000) {
       const r = bucket(occurred);
-      if (r >= 0 && r < hours) recurred[r]! += 1;
+      if (r >= 0 && r < hours) recurred[r] += 1;
     }
   }
   let max = 0;
-  for (let i = 0; i < hours; i += 1) max = Math.max(max, created[i]! + recurred[i]!);
+  for (let i = 0; i < hours; i += 1) max = Math.max(max, created[i] + recurred[i]);
   return { start, hours, created, recurred, max };
 }
 

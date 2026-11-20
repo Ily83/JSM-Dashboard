@@ -28,7 +28,7 @@ export const DEMO_USERS: ReadonlyArray<{ accountId: string; displayName: string 
   'Sofia Lindqvist',
   'Tomás Herrera',
   'Yuki Tanaka',
-].map((displayName) => ({ accountId: `demo-user-${displayName.split(' ')[0]!.toLowerCase().normalize('NFD').replace(/[^a-z]/g, '')}`, displayName }));
+].map((displayName) => ({ accountId: `demo-user-${displayName.split(' ')[0].toLowerCase().normalize('NFD').replace(/[^a-z]/g, '')}`, displayName }));
 
 /** The account behind the (imaginary) API token in demo mode. */
 export const DEMO_ME = { accountId: 'demo-user-operator', displayName: 'Demo Operator' };
@@ -293,7 +293,7 @@ function fromSeed(seed: Seed, index: number, now: number): RawAlert {
   const status = seed.status ?? 'open';
   const updated = seed.upd ?? seed.min;
   const tags = [...(seed.tags ?? [])];
-  const props: Record<string, string> = { ...(seed.props ?? {}) };
+  const props: Record<string, string> = { ...seed.props };
   if (seed.customersInProperty) props.customer = (seed.customers ?? []).join(', ');
   else for (const customer of seed.customers ?? []) tags.push(`customer:${customer}`);
   if (seed.serviceTag) tags.push(`service:${seed.serviceTag}`);
@@ -338,9 +338,11 @@ function fromSeed(seed: Seed, index: number, now: number): RawAlert {
 
 /** Small deterministic generator, so a large demo set is identical on every start. */
 function mulberry32(seed: number): () => number {
-  let state = seed;
+  // A 32-bit signed integer that wraps on overflow, as the algorithm requires.
+  const cell = new Int32Array([seed]);
   return () => {
-    state = (state + 0x6d2b79f5) | 0;
+    cell[0] += 0x6d2b79f5;
+    const state = cell[0];
     let t = Math.imul(state ^ (state >>> 15), 1 | state);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
@@ -356,7 +358,7 @@ export function buildDemoAlerts(now: number, extra = 0): RawAlert[] {
   if (extra <= 0) return alerts;
 
   const random = mulberry32(20_240_517);
-  const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!;
+  const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)];
   const customers = [...new Set(SEEDS.flatMap((s) => s.customers ?? []))];
   const owners = [...new Set(SEEDS.map((s) => s.owner).filter((o): o is string => Boolean(o)))];
   const statuses = ['open', 'open', 'open', 'acked', 'acked', 'snoozed', 'closed', 'closed'] as const;

@@ -13,7 +13,7 @@ let context: AudioContext | null = null;
 
 function audioContext(): AudioContext | null {
   if (context) return context;
-  const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  const Ctor = globalThis.AudioContext ?? (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!Ctor) return null;
   context = new Ctor();
   return context;
@@ -22,7 +22,7 @@ function audioContext(): AudioContext | null {
 /** Call from a click or key handler so later alarms may play. */
 export function unlockAudio(): void {
   const ctx = audioContext();
-  if (ctx && ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
+  if (ctx?.state === 'suspended') void ctx.resume().catch(() => undefined);
 }
 
 export function audioReady(): boolean {
@@ -77,7 +77,8 @@ export async function requestDesktopPermission(): Promise<DesktopPermission> {
 
 function describe(alert: Alert): string {
   const where = alert.customers.length > 0 ? alert.customers.join(', ') : (alert.service ?? alert.source);
-  return `${alert.summary}${where ? `\n${where}` : ''}`;
+  const secondLine = where ? `\n${where}` : '';
+  return `${alert.summary}${secondLine}`;
 }
 
 /**
@@ -98,11 +99,12 @@ export function showDesktop(alerts: readonly Alert[], onOpen: (id: string) => vo
         tag: 'jsm-alert-center-p1-summary',
         requireInteraction: true,
       });
-      n.onclick = () => open(alerts[0]!.id, n);
+      n.onclick = () => open(alerts[0].id, n);
       return 1;
     }
     for (const alert of alerts) {
-      const n = new Notification(`P1${alert.tinyId ? ` #${alert.tinyId}` : ''}`, {
+      const number = alert.tinyId ? ` #${alert.tinyId}` : '';
+      const n = new Notification(`P1${number}`, {
         body: describe(alert),
         tag: `jsm-alert-center-p1-${alert.id}`,
         requireInteraction: true,

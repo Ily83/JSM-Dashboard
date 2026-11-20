@@ -52,7 +52,7 @@ export async function runBulk(
   const failures: Failure[] = [];
   const worker = async () => {
     while (next < targets.length) {
-      const alert = targets[next++]!;
+      const alert = targets[next++];
       try {
         if ((await send(alert)) === 'done') ok += 1;
         else pending += 1;
@@ -74,11 +74,11 @@ export function BulkActionBar({
   selected,
   allowed,
   onClear,
-}: {
+}: Readonly<{
   selected: Alert[];
   allowed: ReadonlySet<ActionId>;
   onClear: () => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const actions = BULK_ACTION_IDS.filter((id) => allowed.has(id));
@@ -147,10 +147,10 @@ export function BulkActionBar({
       break;
     case 'running':
       body = (
-        <span className="inline-flex items-center gap-1.5 text-muted" role="status">
+        <output className="inline-flex items-center gap-1.5 text-muted">
           <Loader2 size={13} aria-hidden className="spin" />
           {ACTION_LABEL[phase.action]}: <span className="tabular-nums">{phase.done} / {phase.total}</span>
-        </span>
+        </output>
       );
       break;
     case 'result':

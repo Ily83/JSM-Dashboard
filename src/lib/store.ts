@@ -58,8 +58,8 @@ export function createPersistentStore<T>(
   }
 
   // Do not lose the last change when the tab is closed within the debounce window.
-  if (typeof window !== 'undefined') {
-    window.addEventListener('pagehide', () => {
+  if (globalThis.window !== undefined) {
+    globalThis.addEventListener('pagehide', () => {
       if (writeTimer !== undefined && loaded && !suspended) {
         clearTimeout(writeTimer);
         getPreferenceStorage().write(key, state);

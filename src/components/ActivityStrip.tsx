@@ -13,14 +13,19 @@ export const ActivityStrip = memo(function ActivityStrip({ alerts, end }: { aler
   const activity = useMemo(() => hourlyActivity(alerts, end), [alerts, end]);
   const total = activity.created.reduce((a, b) => a + b, 0);
   const recurredTotal = activity.recurred.reduce((a, b) => a + b, 0);
-  const label = `Last 24 h, per hour: ${total} created${recurredTotal ? `, ${recurredTotal} re-occurred` : ''}`;
+  const recurredLabel = recurredTotal ? `, ${recurredTotal} re-occurred` : '';
+  const label = `Last 24 h, per hour: ${total} created${recurredLabel}`;
   return (
     <span className="activity-strip" role="img" aria-label={label}>
       {activity.created.map((created, i) => {
-        const recurred = activity.recurred[i]!;
+        const recurred = activity.recurred[i];
         const from = activity.start + i * HOUR_MS;
-        const tip = `${i === 0 || new Date(from).getHours() === 0 ? `${day.format(from)} ` : ''}${hour.format(from)}–${hour.format(from + HOUR_MS)}\n${created} created${recurred ? ` · ${recurred} re-occurred` : ''}`;
-        return <span key={i} data-level={activityLevel(created + recurred, activity.max)} data-tip={tip} data-tip-always="" />;
+        // The first block and each midnight also name the day.
+        const dayLabel = i === 0 || new Date(from).getHours() === 0 ? `${day.format(from)} ` : '';
+        const recurredTip = recurred ? ` · ${recurred} re-occurred` : '';
+        const tip = `${dayLabel}${hour.format(from)}–${hour.format(from + HOUR_MS)}\n${created} created${recurredTip}`;
+        // Each block is one clock hour: its start time identifies it.
+        return <span key={from} data-level={activityLevel(created + recurred, activity.max)} data-tip={tip} data-tip-always="" />;
       })}
     </span>
   );

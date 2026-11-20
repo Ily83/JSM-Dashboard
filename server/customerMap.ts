@@ -73,7 +73,7 @@ function csvCells(line: string, where: string): string[] {
   let cell = '';
   let quoted = false;
   for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i]!;
+    const ch = line[i];
     if (quoted) {
       if (ch === '"' && line[i + 1] === '"') {
         cell += '"';
@@ -108,7 +108,7 @@ export function parseCustomerMapCsv(text: string): CustomerMapRule[] {
     if (rules.length === 0 && /^entity$/i.test(cells[0] ?? '')) return; // header
     if (cells.length < 2) throw new CustomerMapError(`${where}: expected "entity,customers".`);
     // Customers may also be spread over further columns.
-    rules.push(checkRule({ pattern: cells[0]!, customers: cells.slice(1).flatMap(splitCustomers) }, where));
+    rules.push(checkRule({ pattern: cells[0], customers: cells.slice(1).flatMap(splitCustomers) }, where));
   });
   return rules;
 }
@@ -122,7 +122,7 @@ export function parseCustomerMapJson(text: string): CustomerMapRule[] {
   }
   const asList = (value: unknown, where: string): string[] => {
     if (typeof value === 'string') return splitCustomers(value);
-    if (Array.isArray(value) && value.every((v) => typeof v === 'string')) return value as string[];
+    if (Array.isArray(value) && value.every((v) => typeof v === 'string')) return value;
     throw new CustomerMapError(`${where}: customers must be a name or a list of names.`);
   };
   if (Array.isArray(data)) {
@@ -141,7 +141,7 @@ export function parseCustomerMapJson(text: string): CustomerMapRule[] {
 }
 
 function toRegExp(pattern: string): RegExp {
-  const source = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  const source = pattern.replace(/[.+^${}()|[\]\\]/g, String.raw`\$&`).replaceAll('*', '.*').replaceAll('?', '.');
   return new RegExp(`^${source}$`, 'i');
 }
 

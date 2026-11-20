@@ -1,3 +1,4 @@
+import { trimChar } from './id';
 import { PRIORITIES, type Alert, type Priority } from '../../shared/types';
 import { NONE, SET_FIELDS, STATUS_LABEL, teamsOf, TEXT_FIELDS, type SetField } from '../config/filterFields';
 
@@ -109,51 +110,50 @@ function readValue(input: string, start: number): { value: string; quoted: boole
     return { value: input.slice(start + 1, close), quoted: true, end: close + 1 };
   }
   let end = start;
-  while (end < input.length && !/[\s()"]/.test(input[end]!)) end += 1;
+  while (end < input.length && !/[\s()"]/.test(input[end])) end += 1;
   return { value: input.slice(start, end), quoted: false, end };
+}
+
+/** An unquoted word: a keyword or plain text. */
+function wordToken(value: string, at: number): Token {
+  // Keywords are upper case, so "not responding" stays a plain search.
+  if (value === 'AND' || value === '&&') return { type: 'and', at };
+  if (value === 'OR' || value === '||') return { type: 'or', at };
+  if (value === 'NOT') return { type: 'not', at };
+  return { type: 'word', text: value, quoted: false, at };
+}
+
+/** Reads the token that starts at `i`, which is not white space. */
+function readToken(input: string, i: number): { token: Token; end: number } {
+  const ch = input[i];
+  if (ch === '(' || ch === ')') return { token: { type: ch === '(' ? 'lparen' : 'rparen', at: i }, end: i + 1 };
+  // "-" directly before a word or group negates it.
+  if (ch === '-' && i + 1 < input.length && /[^\s-]/.test(input[i + 1])) return { token: { type: 'not', at: i }, end: i + 1 };
+  if (ch === '"') {
+    const { value, end } = readValue(input, i);
+    return { token: { type: 'word', text: value, quoted: true, at: i }, end };
+  }
+  const term = TERM.exec(input.slice(i));
+  const field = term ? lookupField(term[1]) : null;
+  if (term && field) {
+    const valueStart = i + term[0].length;
+    const { value, quoted, end } = readValue(input, valueStart);
+    return { token: { type: 'term', field, op: term[2] as Op, value, quoted, at: i }, end };
+  }
+  const { value, end } = readValue(input, i);
+  return { token: wordToken(value, i), end };
 }
 
 export function tokenize(input: string): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   while (i < input.length) {
-    const ch = input[i]!;
-    if (/\s/.test(ch)) {
+    if (/\s/.test(input[i])) {
       i += 1;
       continue;
     }
-    if (ch === '(' || ch === ')') {
-      tokens.push({ type: ch === '(' ? 'lparen' : 'rparen', at: i });
-      i += 1;
-      continue;
-    }
-    // "-" directly before a word or group negates it.
-    if (ch === '-' && i + 1 < input.length && /[^\s-]/.test(input[i + 1]!)) {
-      tokens.push({ type: 'not', at: i });
-      i += 1;
-      continue;
-    }
-    if (ch === '"') {
-      const { value, end } = readValue(input, i);
-      tokens.push({ type: 'word', text: value, quoted: true, at: i });
-      i = end;
-      continue;
-    }
-    const term = TERM.exec(input.slice(i));
-    const field = term ? lookupField(term[1]!) : null;
-    if (term && field) {
-      const valueStart = i + term[0].length;
-      const { value, quoted, end } = readValue(input, valueStart);
-      tokens.push({ type: 'term', field, op: term[2] as Op, value, quoted, at: i });
-      i = end;
-      continue;
-    }
-    const { value, end } = readValue(input, i);
-    // Keywords are upper case, so "not responding" stays a plain search.
-    if (value === 'AND' || value === '&&') tokens.push({ type: 'and', at: i });
-    else if (value === 'OR' || value === '||') tokens.push({ type: 'or', at: i });
-    else if (value === 'NOT') tokens.push({ type: 'not', at: i });
-    else tokens.push({ type: 'word', text: value, quoted: false, at: i });
+    const { token, end } = readToken(input, i);
+    tokens.push(token);
     i = end;
   }
   return tokens;
@@ -176,10 +176,10 @@ function parseTokens(tokens: Token[], input: string): Node | null {
     const children = [parseAnd()];
     while (peek()?.type === 'or') {
       pos += 1;
-      if (!peek() || peek()!.type === 'rparen') throw new QueryError('Nothing after OR', tokens[pos - 1]!.at);
+      if (!peek() || peek().type === 'rparen') throw new QueryError('Nothing after OR', tokens[pos - 1].at);
       children.push(parseAnd());
     }
-    return children.length === 1 ? children[0]! : { type: 'or', children };
+    return children.length === 1 ? children[0] : { type: 'or', children };
   };
 
   const parseAnd = (): Node => {
@@ -189,11 +189,11 @@ function parseTokens(tokens: Token[], input: string): Node | null {
       if (!next || next.type === 'or' || next.type === 'rparen') break;
       if (next.type === 'and') {
         pos += 1;
-        if (!peek() || peek()!.type === 'or' || peek()!.type === 'rparen') throw new QueryError('Nothing after AND', next.at);
+        if (!peek() || peek().type === 'or' || peek().type === 'rparen') throw new QueryError('Nothing after AND', next.at);
       }
       children.push(parseUnary());
     }
-    return children.length === 1 ? children[0]! : { type: 'and', children };
+    return children.length === 1 ? children[0] : { type: 'and', children };
   };
 
   const parseUnary = (): Node => {
@@ -222,7 +222,7 @@ function parseTokens(tokens: Token[], input: string): Node | null {
 
   if (tokens.length === 0) return null;
   const node = parseOr();
-  if (pos < tokens.length) throw new QueryError('Unexpected )', tokens[pos]!.at);
+  if (pos < tokens.length) throw new QueryError('Unexpected )', tokens[pos].at);
   return node;
 }
 
@@ -243,7 +243,7 @@ const PRIORITY_RANK = Object.fromEntries(PRIORITIES.map((p, i) => [p, i])) as Re
 function wildcard(pattern: string): (value: string) => boolean {
   if (!pattern.includes('*')) return (value) => value === pattern;
   // Common shapes without a regular expression: text*, *text, *text*.
-  const inner = pattern.replace(/^\*+|\*+$/g, '');
+  const inner = trimChar(pattern, '*');
   if (!inner.includes('*')) {
     const starts = !pattern.startsWith('*');
     const ends = !pattern.endsWith('*');
@@ -253,7 +253,7 @@ function wildcard(pattern: string): (value: string) => boolean {
   }
   const source = pattern
     .split('*')
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, String.raw`\$&`))
     .join('.*');
   const regex = new RegExp(`^${source}$`, 's');
   return (value) => regex.test(value);
@@ -267,139 +267,162 @@ function isEmptyValue(value: string, quoted: boolean): boolean {
 const STATUS_WORDS: Record<string, string> = { acknowledged: 'acked', ack: 'acked', resolved: 'closed' };
 for (const [status, label] of Object.entries(STATUS_LABEL)) STATUS_WORDS[label.toLowerCase()] = status;
 
-function compileTerm(node: Extract<Node, { type: 'term' }>, ctx: CompileContext): Predicate {
-  const { field, op, quoted } = node;
-  const raw = node.value;
-  const fail = (message: string): never => {
-    throw new QueryError(message, node.at);
-  };
-  if (raw === '' && !quoted) fail(`${field.name} needs a value`);
-  const negate = op === '!=';
-  const get = field.get;
+type TermNode = Extract<Node, { type: 'term' }>;
 
-  let predicate: Predicate;
-  switch (field.kind) {
-    case 'priority': {
-      const wanted = raw.toUpperCase() as Priority;
-      if (!(wanted in PRIORITY_RANK)) fail(`Unknown priority "${raw}"`);
-      const rank = PRIORITY_RANK[wanted];
-      // Lower number = more urgent: priority<=P2 means P1 or P2.
-      const compare: Record<Op, (r: number) => boolean> = {
-        ':': (r) => r === rank,
-        '=': (r) => r === rank,
-        '!=': (r) => r === rank,
-        '<': (r) => r < rank,
-        '<=': (r) => r <= rank,
-        '>': (r) => r > rank,
-        '>=': (r) => r >= rank,
-      };
-      const test = compare[op];
-      predicate = (a) => test(PRIORITY_RANK[a.priority]);
-      break;
-    }
-    case 'bool': {
-      if (op !== ':' && op !== '=' && op !== '!=') fail(`${field.name} cannot be compared with ${op}`);
-      const value = raw.toLowerCase();
-      const yes = ['yes', 'true', '1', 'y'].includes(value);
-      const no = ['no', 'false', '0', 'n'].includes(value);
-      if (!yes && !no) fail(`${field.name} is yes or no`);
-      predicate = (a) => get(a) === yes;
-      break;
-    }
-    case 'number': {
-      const value = Number(raw);
-      if (!Number.isFinite(value)) fail(`${field.name} needs a number`);
-      const compare: Record<Op, (n: number) => boolean> = {
-        ':': (n) => n === value,
-        '=': (n) => n === value,
-        '!=': (n) => n === value,
-        '<': (n) => n < value,
-        '<=': (n) => n <= value,
-        '>': (n) => n > value,
-        '>=': (n) => n >= value,
-      };
-      const test = compare[op];
-      predicate = (a) => test(get(a) as number);
-      break;
-    }
-    case 'date': {
-      const duration = DURATION.exec(raw);
-      if (duration) {
-        // Durations compare the age: created<2h = within the last 2 hours.
-        const ms = Number(duration[1]) * UNIT_MS[duration[2]!.toLowerCase()]!;
-        const cutoff = ctx.now - ms;
-        const compare: Record<Op, (t: number) => boolean> = {
-          ':': (t) => t >= cutoff,
-          '=': (t) => t >= cutoff,
-          '!=': (t) => t >= cutoff,
-          '<': (t) => t > cutoff,
-          '<=': (t) => t >= cutoff,
-          '>': (t) => t < cutoff,
-          '>=': (t) => t <= cutoff,
-        };
-        const test = compare[op];
-        predicate = (a) => {
-          const t = get(a) as number | null;
-          return t !== null && t > 0 && test(t);
-        };
-        break;
-      }
-      // Dates compare the time itself: created>2026-11-01 = after that day.
-      const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? Date.parse(`${raw}T00:00`) : Date.parse(raw);
-      if (!/^\d{4}-\d{2}-\d{2}/.test(raw) || !Number.isFinite(date)) fail(`Use a duration (2h, 3d) or a date (2026-11-01) for ${field.name}`);
-      const dayOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
-      const next = dayOnly ? date + 86_400_000 : date;
-      const compare: Record<Op, (t: number) => boolean> = {
-        ':': (t) => t >= date && t < next,
-        '=': (t) => t >= date && t < next,
-        '!=': (t) => t >= date && t < next,
-        '<': (t) => t < date,
-        '<=': (t) => t < next,
-        '>': (t) => t >= next,
-        '>=': (t) => t >= date,
-      };
-      const test = compare[op];
-      predicate = (a) => {
-        const t = get(a) as number | null;
-        return t !== null && t > 0 && test(t);
-      };
-      break;
-    }
-    case 'text': {
-      if (op !== ':' && op !== '=' && op !== '!=') fail(`${field.name} cannot be compared with ${op}`);
-      let needle = raw.toLowerCase();
-      if (field.name === 'id') needle = needle.replace(/^#/, '');
-      // Text fields match "contains" unless the pattern has wildcards.
-      const match = needle.includes('*') ? wildcard(needle) : (v: string) => v.includes(needle);
-      predicate = (a) => {
-        const value = String(get(a) ?? '').toLowerCase();
-        return field.name === 'id' ? value.split('\n').some((part) => part !== '' && match(part)) : match(value);
-      };
-      break;
-    }
-    case 'set': {
-      if (op !== ':' && op !== '=' && op !== '!=') fail(`${field.name} cannot be compared with ${op}`);
-      if (isEmptyValue(raw, quoted)) {
-        predicate = (a) => {
-          const value = get(a);
-          return value === null || value === NONE || (Array.isArray(value) && value.length === 0);
-        };
-        break;
-      }
-      let needle = raw.toLowerCase();
-      if (field.name === 'status') needle = STATUS_WORDS[needle] ?? needle;
-      const match = wildcard(needle);
-      predicate = (a) => {
-        const value = get(a);
-        if (value === null) return false;
-        if (typeof value === 'string') return match(value.toLowerCase());
-        for (const item of value as readonly string[]) if (match(item.toLowerCase())) return true;
-        return false;
-      };
-      break;
-    }
+function fail(node: TermNode, message: string): never {
+  throw new QueryError(message, node.at);
+}
+
+/** Yes/no, text and list fields only know `:`, `=` and `!=`. */
+function requireEqualityOp(node: TermNode): void {
+  const { field, op } = node;
+  if (op !== ':' && op !== '=' && op !== '!=') fail(node, `${field.name} cannot be compared with ${op}`);
+}
+
+/** Tests against a number for each operator; `!=` tests equality and is negated afterwards. */
+function compareNumber(target: number): Record<Op, (n: number) => boolean> {
+  return {
+    ':': (n) => n === target,
+    '=': (n) => n === target,
+    '!=': (n) => n === target,
+    '<': (n) => n < target,
+    '<=': (n) => n <= target,
+    '>': (n) => n > target,
+    '>=': (n) => n >= target,
+  };
+}
+
+function compilePriorityTerm(node: TermNode): Predicate {
+  const raw = node.value;
+  const wanted = raw.toUpperCase() as Priority;
+  if (!(wanted in PRIORITY_RANK)) fail(node, `Unknown priority "${raw}"`);
+  // Lower number = more urgent: priority<=P2 means P1 or P2.
+  const test = compareNumber(PRIORITY_RANK[wanted])[node.op];
+  return (a) => test(PRIORITY_RANK[a.priority]);
+}
+
+function compileBoolTerm(node: TermNode): Predicate {
+  const { field } = node;
+  requireEqualityOp(node);
+  const value = node.value.toLowerCase();
+  const yes = ['yes', 'true', '1', 'y'].includes(value);
+  const no = ['no', 'false', '0', 'n'].includes(value);
+  if (!yes && !no) fail(node, `${field.name} is yes or no`);
+  const get = field.get;
+  return (a) => get(a) === yes;
+}
+
+function compileNumberTerm(node: TermNode): Predicate {
+  const { field } = node;
+  const value = Number(node.value);
+  if (!Number.isFinite(value)) fail(node, `${field.name} needs a number`);
+  const test = compareNumber(value)[node.op];
+  const get = field.get;
+  return (a) => test(get(a) as number);
+}
+
+/** Durations compare the age: created<2h = within the last 2 hours. */
+function durationTest(duration: RegExpExecArray, op: Op, ctx: CompileContext): (t: number) => boolean {
+  const ms = Number(duration[1]) * UNIT_MS[duration[2].toLowerCase()];
+  const cutoff = ctx.now - ms;
+  const compare: Record<Op, (t: number) => boolean> = {
+    ':': (t) => t >= cutoff,
+    '=': (t) => t >= cutoff,
+    '!=': (t) => t >= cutoff,
+    '<': (t) => t > cutoff,
+    '<=': (t) => t >= cutoff,
+    '>': (t) => t < cutoff,
+    '>=': (t) => t <= cutoff,
+  };
+  return compare[op];
+}
+
+/** Dates compare the time itself: created>2026-11-01 = after that day. */
+function dateTest(node: TermNode): (t: number) => boolean {
+  const raw = node.value;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? Date.parse(`${raw}T00:00`) : Date.parse(raw);
+  if (!/^\d{4}-\d{2}-\d{2}/.test(raw) || !Number.isFinite(date)) fail(node, `Use a duration (2h, 3d) or a date (2026-11-01) for ${node.field.name}`);
+  const dayOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+  const next = dayOnly ? date + 86_400_000 : date;
+  const compare: Record<Op, (t: number) => boolean> = {
+    ':': (t) => t >= date && t < next,
+    '=': (t) => t >= date && t < next,
+    '!=': (t) => t >= date && t < next,
+    '<': (t) => t < date,
+    '<=': (t) => t < next,
+    '>': (t) => t >= next,
+    '>=': (t) => t >= date,
+  };
+  return compare[node.op];
+}
+
+function compileDateTerm(node: TermNode, ctx: CompileContext): Predicate {
+  const duration = DURATION.exec(node.value);
+  const test = duration ? durationTest(duration, node.op, ctx) : dateTest(node);
+  const get = node.field.get;
+  return (a) => {
+    const t = get(a) as number | null;
+    return t !== null && t > 0 && test(t);
+  };
+}
+
+function compileTextTerm(node: TermNode): Predicate {
+  const { field } = node;
+  requireEqualityOp(node);
+  let needle = node.value.toLowerCase();
+  if (field.name === 'id') needle = needle.replace(/^#/, '');
+  // Text fields match "contains" unless the pattern has wildcards.
+  const match = needle.includes('*') ? wildcard(needle) : (v: string) => v.includes(needle);
+  const get = field.get;
+  return (a) => {
+    const value = String(get(a) ?? '').toLowerCase();
+    return field.name === 'id' ? value.split('\n').some((part) => part !== '' && match(part)) : match(value);
+  };
+}
+
+function compileSetTerm(node: TermNode): Predicate {
+  const { field } = node;
+  requireEqualityOp(node);
+  const get = field.get;
+  if (isEmptyValue(node.value, node.quoted)) {
+    return (a) => {
+      const value = get(a);
+      return value === null || value === NONE || (Array.isArray(value) && value.length === 0);
+    };
   }
-  return negate ? (a) => !predicate(a) : predicate;
+  let needle = node.value.toLowerCase();
+  if (field.name === 'status') needle = STATUS_WORDS[needle] ?? needle;
+  const match = wildcard(needle);
+  return (a) => {
+    const value = get(a);
+    if (value === null) return false;
+    if (typeof value === 'string') return match(value.toLowerCase());
+    for (const item of value as readonly string[]) if (match(item.toLowerCase())) return true;
+    return false;
+  };
+}
+
+function termPredicate(node: TermNode, ctx: CompileContext): Predicate {
+  switch (node.field.kind) {
+    case 'priority':
+      return compilePriorityTerm(node);
+    case 'bool':
+      return compileBoolTerm(node);
+    case 'number':
+      return compileNumberTerm(node);
+    case 'date':
+      return compileDateTerm(node, ctx);
+    case 'text':
+      return compileTextTerm(node);
+    case 'set':
+      return compileSetTerm(node);
+  }
+}
+
+function compileTerm(node: TermNode, ctx: CompileContext): Predicate {
+  if (node.value === '' && !node.quoted) fail(node, `${node.field.name} needs a value`);
+  const predicate = termPredicate(node, ctx);
+  return node.op === '!=' ? (a) => !predicate(a) : predicate;
 }
 
 function compileNode(node: Node, ctx: CompileContext): Predicate {

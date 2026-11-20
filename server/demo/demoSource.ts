@@ -26,6 +26,28 @@ import { buildDemoAlerts, DEMO_ESCALATIONS, DEMO_ME, DEMO_RESPONDER_NAMES, DEMO_
  * Write actions change this in-memory copy only, with the same rules Jira
  * applies, so every button can be tried safely. A restart resets everything.
  */
+
+/** The fictional person to assign, or Jira's 422 for an unknown account. */
+function demoUser(accountId: string): { accountId: string; displayName: string } {
+  const user = DEMO_USERS.find((u) => u.accountId === accountId) ?? (DEMO_ME.accountId === accountId ? DEMO_ME : null);
+  if (!user) throw new JiraApiError('validation', 422, 'Jira rejected the request (422).');
+  return user;
+}
+
+/** Name of a fictional escalation, or Jira's 422 for an unknown one. */
+function escalationName(escalationId: string): string {
+  const name = Object.values(DEMO_ESCALATIONS).flat().find((e) => e.id === escalationId)?.name;
+  if (!name) throw new JiraApiError('validation', 422, 'Jira rejected the request (422).');
+  return name;
+}
+
+/** The alert's responders with `responder` added, unless one with its id is there already. */
+function withResponder(raw: RawAlert, responder: { id: string; type: string }): NonNullable<RawAlert['responders']> {
+  const responders = [...(raw.responders ?? [])];
+  if (!responders.some((r) => r.id === responder.id)) responders.push(responder);
+  return responders;
+}
+
 export class DemoSource implements AlertSource, AlertOperations {
   readonly mode = 'demo' as const;
   private readonly snapshot: SourceSnapshot;
@@ -120,25 +142,18 @@ export class DemoSource implements AlertSource, AlertOperations {
         text = `Alert snoozed until ${action.endTime.slice(0, 16).replace('T', ' ')} UTC`;
         break;
       case 'assign': {
-        const user = DEMO_USERS.find((u) => u.accountId === action.accountId) ?? (DEMO_ME.accountId === action.accountId ? DEMO_ME : null);
-        if (!user) throw new JiraApiError('validation', 422, 'Jira rejected the request (422).');
+        const user = demoUser(action.accountId);
         next.owner = user.displayName;
         text = `Alert owner changed to ${user.displayName}`;
         break;
       }
-      case 'addResponder': {
-        const responders = [...(raw.responders ?? [])];
-        if (!responders.some((r) => r.id === action.responder.id)) responders.push({ ...action.responder });
-        next.responders = responders;
+      case 'addResponder':
+        next.responders = withResponder(raw, { ...action.responder });
         text = `Responder added: ${this.responderName(action.responder.type, action.responder.id)}`;
         break;
-      }
       case 'escalate': {
-        const name = Object.values(DEMO_ESCALATIONS).flat().find((e) => e.id === action.escalationId)?.name;
-        if (!name) throw new JiraApiError('validation', 422, 'Jira rejected the request (422).');
-        const responders = [...(raw.responders ?? [])];
-        if (!responders.some((r) => r.id === action.escalationId)) responders.push({ id: action.escalationId, type: 'escalation' });
-        next.responders = responders;
+        const name = escalationName(action.escalationId);
+        next.responders = withResponder(raw, { id: action.escalationId, type: 'escalation' });
         text = `Escalated to next level of ${name}`;
         break;
       }

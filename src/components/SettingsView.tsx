@@ -2,6 +2,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Copy, Download, Play, RotateCcw, Star, Trash2, Upload } from 'lucide-react';
 import { ACTION_IDS, ACTION_LABEL } from '../../shared/actions';
 import type { Alert, StatusResponse } from '../../shared/types';
+import { trimChar } from '../lib/id';
 import { desktopPermission, playAlarm, requestDesktopPermission, showDesktop, unlockAudio, type DesktopPermission } from '../lib/alarm';
 import { COLUMN_INFO } from '../config/columns';
 import { FILTER_FIELDS, type FilterFieldId } from '../config/filterFields';
@@ -41,7 +42,7 @@ import { CustomerBadge } from './ui/badges';
  * filter or widget shows up here without changes to this file.
  */
 
-function Card({ id, title, action, children }: { id: string; title: string; action?: ReactNode; children: ReactNode }) {
+function Card({ id, title, action, children }: Readonly<{ id: string; title: string; action?: ReactNode; children: ReactNode }>) {
   return (
     <section aria-labelledby={`settings-${id}`} className="rounded-lg border border-line bg-panel">
       <div className="flex h-10 items-center justify-between border-b border-line px-4">
@@ -55,7 +56,7 @@ function Card({ id, title, action, children }: { id: string; title: string; acti
   );
 }
 
-function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+function Row({ label, hint, children }: Readonly<{ label: string; hint?: string; children: ReactNode }>) {
   return (
     <div className="flex min-h-9 flex-wrap items-center justify-between gap-x-4 gap-y-1 py-1">
       <div className="min-w-0">
@@ -67,7 +68,7 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
   );
 }
 
-function Segmented<T extends string | number>({ value, options, onChange, label }: { value: T; options: Array<{ value: T; label: string }>; onChange: (value: T) => void; label: string }) {
+function Segmented<T extends string | number>({ value, options, onChange, label }: Readonly<{ value: T; options: Array<{ value: T; label: string }>; onChange: (value: T) => void; label: string }>) {
   return (
     <div role="radiogroup" aria-label={label} className="flex overflow-hidden rounded-md border border-line-strong">
       {options.map((option) => (
@@ -89,7 +90,7 @@ function Segmented<T extends string | number>({ value, options, onChange, label 
   );
 }
 
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label: string }) {
+function Toggle({ checked, onChange, label }: Readonly<{ checked: boolean; onChange: (checked: boolean) => void; label: string }>) {
   return (
     <button
       type="button"
@@ -135,11 +136,16 @@ const SAMPLE_P1: Alert = {
   url: null,
 };
 
+function desktopHint(permission: DesktopPermission): string {
+  if (permission === 'unsupported') return 'Not supported by this browser';
+  if (permission === 'denied') return 'Blocked in the browser settings';
+  return 'New P1 alerts only';
+}
+
 /** P1 alarm: only P1 alerts, never other priorities. */
-function P1AlarmCard({ sound, desktop }: { sound: boolean; desktop: boolean }) {
+function P1AlarmCard({ sound, desktop }: Readonly<{ sound: boolean; desktop: boolean }>) {
   const [permission, setPermission] = useState<DesktopPermission>(desktopPermission);
   const [tested, setTested] = useState<string | null>(null);
-  const blocked = permission === 'denied' || permission === 'unsupported';
   return (
     <Card id="p1-alarm" title="P1 alarm">
       <Row label="Sound" hint="New P1 alerts only">
@@ -152,7 +158,7 @@ function P1AlarmCard({ sound, desktop }: { sound: boolean; desktop: boolean }) {
           }}
         />
       </Row>
-      <Row label="Desktop notification" hint={blocked ? (permission === 'unsupported' ? 'Not supported by this browser' : 'Blocked in the browser settings') : 'New P1 alerts only'}>
+      <Row label="Desktop notification" hint={desktopHint(permission)}>
         <Toggle
           label="Desktop notification for new P1 alerts"
           checked={desktop && permission === 'granted'}
@@ -193,7 +199,7 @@ const smallIcon = 'rounded p-1 text-muted hover:bg-hover hover:text-fg disabled:
 const select = 'h-7 rounded-md border border-line-strong bg-panel px-1.5 text-xs text-fg';
 const th = 'px-2 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted';
 
-function MoveButtons({ label, index, count, onMove }: { label: string; index: number; count: number; onMove: (delta: -1 | 1) => void }) {
+function MoveButtons({ label, index, count, onMove }: Readonly<{ label: string; index: number; count: number; onMove: (delta: -1 | 1) => void }>) {
   return (
     <span className="flex">
       <button type="button" aria-label={`Move ${label} up`} disabled={index === 0} onClick={() => onMove(-1)} className={smallIcon}>
@@ -206,6 +212,24 @@ function MoveButtons({ label, index, count, onMove }: { label: string; index: nu
   );
 }
 
+function refreshLabel(seconds: number): string {
+  if (seconds === 0) return 'Off';
+  return seconds < 60 ? `${seconds} seconds` : `${seconds / 60} min`;
+}
+
+function modeLabel(status: StatusResponse): string {
+  if (status.mode === 'demo') return 'Demo (sample data)';
+  return status.readOnly ? 'Live · read-only' : 'Live · write actions on';
+}
+
+function writeActionsLabel(status: StatusResponse): ReactNode {
+  if (!status.writes.enabled) {
+    return <span data-tip="JIRA_WRITE_ACTIONS in .env" data-tip-always="">Off</span>;
+  }
+  if (status.writes.actions.length === ACTION_IDS.length) return `All${status.mode === 'demo' ? ' · sample data only' : ''}`;
+  return status.writes.actions.map((id) => ACTION_LABEL[id]).join(', ');
+}
+
 interface SettingsViewProps {
   status: StatusResponse | undefined;
   /** Values seen in the current data, offered in the profile fields. */
@@ -213,7 +237,7 @@ interface SettingsViewProps {
   customers: string[];
 }
 
-export function SettingsView({ status, assignees, customers }: SettingsViewProps) {
+export function SettingsView({ status, assignees, customers }: Readonly<SettingsViewProps>) {
   const prefs = useStore(prefsStore);
   const table = useStore(tableLayoutStore);
   const dashboard = useStore(dashboardStore);
@@ -251,7 +275,7 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
             />
           </Row>
           <Row label="Density">
-            <Segmented label="Density" value={prefs.density} onChange={(density) => patchPrefs({ density })} options={DENSITIES.map((d) => ({ value: d, label: d[0]!.toUpperCase() + d.slice(1) }))} />
+            <Segmented label="Density" value={prefs.density} onChange={(density) => patchPrefs({ density })} options={DENSITIES.map((d) => ({ value: d, label: d[0].toUpperCase() + d.slice(1) }))} />
           </Row>
           <Row label="Highlight critical alerts">
             <Toggle label="Highlight critical alerts" checked={prefs.highlightCritical} onChange={(highlightCritical) => patchPrefs({ highlightCritical })} />
@@ -263,7 +287,7 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
             <select className={select} aria-label="Auto-refresh interval" value={refresh} onChange={(event) => patchPrefs({ refreshSeconds: Number(event.target.value) })}>
               {refreshOptions.map((seconds) => (
                 <option key={seconds} value={seconds}>
-                  {seconds === 0 ? 'Off' : seconds < 60 ? `${seconds} seconds` : `${seconds / 60} min`}
+                  {refreshLabel(seconds)}
                 </option>
               ))}
             </select>
@@ -384,7 +408,7 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
                   <span className="flex-none text-xs text-subtle max-sm:hidden">{SECTIONS[view.section].label.replace(' Alerts', '')}</span>
                   <label className="flex flex-none cursor-pointer items-center gap-1 text-xs text-muted" data-tip="Applying this view also restores columns, dashboard and density" data-tip-always="">
                     <input type="checkbox" className="size-3.5 accent-(--accent)" checked={view.layout !== null} onChange={(event) => setViewLayout(view.id, event.target.checked)} />
-                    Layout
+                    {'Layout'}
                   </label>
                   <MoveButtons label={view.name} index={index} count={views.saved.length} onMove={(delta) => moveView(view.id, delta)} />
                   <button type="button" aria-label={`Open ${view.name}`} data-tip="Open" data-tip-always="" onClick={() => applyView(view.id)} className={smallIcon}>
@@ -558,15 +582,9 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
           {status ? (
             <dl className="grid grid-cols-[150px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
               <dt className="text-muted">Mode</dt>
-              <dd>{status.mode === 'demo' ? 'Demo (sample data)' : status.readOnly ? 'Live · read-only' : 'Live · write actions on'}</dd>
+              <dd>{modeLabel(status)}</dd>
               <dt className="text-muted">Write actions</dt>
-              <dd className="break-words">
-                {status.writes.enabled
-                  ? status.writes.actions.length === ACTION_IDS.length
-                    ? `All${status.mode === 'demo' ? ' · sample data only' : ''}`
-                    : status.writes.actions.map((id) => ACTION_LABEL[id]).join(', ')
-                  : <span data-tip="JIRA_WRITE_ACTIONS in .env" data-tip-always="">Off</span>}
-              </dd>
+              <dd className="break-words">{writeActionsLabel(status)}</dd>
               {status.site && (
                 <>
                   <dt className="text-muted">Jira site</dt>
@@ -621,8 +639,8 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
                     suspendPersistence();
                     const storage = getPreferenceStorage();
                     for (const key of ['prefs:v1', 'table:v1', 'dashboard:v1', 'views:v1']) storage.remove(key);
-                    window.location.hash = '';
-                    window.location.reload();
+                    globalThis.location.hash = '';
+                    globalThis.location.reload();
                   }}
                   className="h-7 rounded-md bg-crit px-2.5 text-xs font-semibold text-panel"
                 >
@@ -647,7 +665,7 @@ export function SettingsView({ status, assignees, customers }: SettingsViewProps
 // ---- Backup -------------------------------------------------------------------
 
 function slug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'view';
+  return trimChar(name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), '-').slice(0, 40) || 'view';
 }
 
 function downloadJson(fileName: string, value: unknown): void {
@@ -757,14 +775,15 @@ function BackupCard() {
       </Row>
       <p className="text-xs text-subtle">No credentials or alerts. Customer names and tags in views and profile are included.</p>
 
-      {message && (
-        <p role={message.tone === 'error' ? 'alert' : 'status'} className={cn('mt-2 text-xs', message.tone === 'error' ? 'text-crit' : 'text-ok')}>
+      {message?.tone === 'error' && (
+        <p role="alert" className="mt-2 text-xs text-crit">
           {message.text}
         </p>
       )}
+      {message?.tone === 'ok' && <output className="mt-2 block text-xs text-ok">{message.text}</output>}
 
       {pending && plan && (
-        <div className="mt-3 rounded-md border border-line-strong p-3" role="group" aria-label="Import preview">
+        <fieldset className="mt-3 min-w-0 rounded-md border border-line-strong p-3" aria-label="Import preview">
           <div className="flex items-baseline justify-between gap-2">
             <span className="min-w-0 truncate font-medium">{pending.fileName}</span>
             {pending.payload.exportedAt && (
@@ -795,7 +814,7 @@ function BackupCard() {
                     checked={pending.views}
                     onChange={(event) => setPending((p) => (p ? { ...p, views: event.target.checked } : p))}
                   />
-                  Saved views
+                  {'Saved views'}
                   <span className="ml-auto text-xs tabular-nums text-muted">
                     {[
                       `${plan.added.length} new`,
@@ -852,7 +871,7 @@ function BackupCard() {
               Import
             </button>
           </div>
-        </div>
+        </fieldset>
       )}
     </Card>
   );

@@ -13,8 +13,9 @@ import { defineConfig } from '@playwright/test';
 // The live backend is started only when the live project is asked for
 // (`--project=live`, as `npm run e2e:live` does): it needs the Jira values in .env.
 const live = process.env.E2E_LIVE === '1' || process.argv.some((arg, i, all) => arg === '--project=live' || (arg === '--project' && all[i + 1] === 'live'));
-const DEMO_PORT = 8790;
-const LIVE_PORT = 8791;
+// Ports can be moved (E2E_DEMO_PORT, E2E_LIVE_PORT) to run several copies side by side.
+const DEMO_PORT = Number(process.env.E2E_DEMO_PORT ?? 8790);
+const LIVE_PORT = Number(process.env.E2E_LIVE_PORT ?? 8791);
 
 export default defineConfig({
   testDir: 'e2e',

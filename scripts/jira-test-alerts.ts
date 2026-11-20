@@ -10,9 +10,11 @@
  * also acknowledges, snoozes, assigns or closes some alerts so that every
  * status appears. Never run it against a production site.
  */
+import type { DirectoryUser } from '../shared/actions';
 import { loadConfig } from '../server/config';
 import { buildDemoAlerts } from '../server/demo/demoData';
 import { JiraClient, type CreateAlertBody } from '../server/jira/client';
+import type { RawAlert } from '../server/jira/schemas';
 
 const TEST_TAG = 'alert-center-test';
 const args = process.argv.slice(2);
@@ -36,49 +38,59 @@ if (!confirmed) {
 const client = new JiraClient(config.jira, 2);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function testAlertBody(raw: RawAlert): CreateAlertBody {
+  return {
+    // Jira keeps at most 130 characters of the message.
+    message: (raw.message ?? 'Test alert').slice(0, 130),
+    alias: `${TEST_TAG}-${raw.alias ?? raw.id}`.slice(0, 512),
+    description: raw.description ?? undefined,
+    tags: [...(raw.tags ?? []), TEST_TAG],
+    entity: raw.entity ?? undefined,
+    source: 'Alert Center test',
+    priority: (raw.priority as CreateAlertBody['priority']) ?? 'P3',
+    extraProperties: Object.fromEntries(Object.entries(raw.extraProperties ?? {}).map(([k, v]) => [k, String(v)])),
+  };
+}
+
+/** Brings a new alert to its sample's owner and status. Returns what was done. */
+async function followUp(id: string, raw: RawAlert, me: DirectoryUser | null): Promise<string[]> {
+  const followUps: string[] = [];
+  try {
+    if (raw.owner && me) {
+      await client.performAction(id, { action: 'assign', accountId: me.accountId });
+      followUps.push(`assigned to ${me.displayName}`);
+    }
+    if (raw.status === 'acked') {
+      await client.performAction(id, { action: 'acknowledge' });
+      followUps.push('acknowledged');
+    } else if (raw.status === 'snoozed') {
+      await client.performAction(id, { action: 'snooze', endTime: new Date(Date.now() + 4 * 3_600_000).toISOString() });
+      followUps.push('snoozed 4 h');
+    } else if (raw.status === 'closed') {
+      await client.performAction(id, { action: 'close' });
+      followUps.push('closed');
+    }
+  } catch (error) {
+    followUps.push(`follow-up failed: ${error instanceof Error ? error.message : 'error'}`);
+  }
+  return followUps;
+}
+
 async function create(): Promise<void> {
   const me = await client.myself().catch(() => null);
   const samples = buildDemoAlerts(Date.now()).slice(0, count);
   let created = 0;
   for (const raw of samples) {
-    const body: CreateAlertBody = {
-      // Jira keeps at most 130 characters of the message.
-      message: (raw.message ?? 'Test alert').slice(0, 130),
-      alias: `${TEST_TAG}-${raw.alias ?? raw.id}`.slice(0, 512),
-      description: raw.description ?? undefined,
-      tags: [...(raw.tags ?? []), TEST_TAG],
-      entity: raw.entity ?? undefined,
-      source: 'Alert Center test',
-      priority: (raw.priority as CreateAlertBody['priority']) ?? 'P3',
-      extraProperties: Object.fromEntries(Object.entries(raw.extraProperties ?? {}).map(([k, v]) => [k, String(v)])),
-    };
+    const body = testAlertBody(raw);
     const result = await client.createAlert(body);
     if (!result.alertId) {
       console.log(`  created (not confirmed yet): ${body.message.slice(0, 70)}`);
       continue;
     }
     created += 1;
-    const id = result.alertId;
-    const followUps: string[] = [];
-    try {
-      if (raw.owner && me) {
-        await client.performAction(id, { action: 'assign', accountId: me.accountId });
-        followUps.push(`assigned to ${me.displayName}`);
-      }
-      if (raw.status === 'acked') {
-        await client.performAction(id, { action: 'acknowledge' });
-        followUps.push('acknowledged');
-      } else if (raw.status === 'snoozed') {
-        await client.performAction(id, { action: 'snooze', endTime: new Date(Date.now() + 4 * 3_600_000).toISOString() });
-        followUps.push('snoozed 4 h');
-      } else if (raw.status === 'closed') {
-        await client.performAction(id, { action: 'close' });
-        followUps.push('closed');
-      }
-    } catch (error) {
-      followUps.push(`follow-up failed: ${error instanceof Error ? error.message : 'error'}`);
-    }
-    console.log(`  ${body.priority} ${body.message.slice(0, 70)}${followUps.length ? `  [${followUps.join(', ')}]` : ''}`);
+    const followUps = await followUp(result.alertId, raw, me);
+    const done = followUps.length ? `  [${followUps.join(', ')}]` : '';
+    console.log(`  ${body.priority} ${body.message.slice(0, 70)}${done}`);
     await sleep(150);
   }
   console.log(`${created} of ${samples.length} test alerts created on ${config.jira!.siteHost}.`);
@@ -104,7 +116,8 @@ async function close(): Promise<void> {
 }
 
 try {
-  await (command === 'create' ? create() : close());
+  if (command === 'create') await create();
+  else await close();
 } catch (error) {
   fail(error instanceof Error ? error.message : 'Failed.');
 }

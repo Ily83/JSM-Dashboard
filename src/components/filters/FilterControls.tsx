@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type ComponentProps, type ReactNode } from 'react';
 import { Ban, CalendarClock, ChevronDown, X } from 'lucide-react';
 import type { AlertStatus, Priority } from '../../../shared/types';
 import {
@@ -70,16 +70,16 @@ interface TriggerProps {
   buttonProps: Record<string, unknown>;
 }
 
+function triggerTone(active: boolean, open: boolean): string {
+  if (active) return 'border-accent bg-accent-soft text-fg';
+  return open ? 'border-line-strong bg-hover text-fg' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg';
+}
+
 /** Filter button. When active it shows its value and a clear button. */
-function Trigger({ label, summary, open, onClear, icon, buttonProps }: TriggerProps) {
+function Trigger({ label, summary, open, onClear, icon, buttonProps }: Readonly<TriggerProps>) {
   const active = summary !== null;
   return (
-    <span
-      className={cn(
-        'flex h-7 items-stretch rounded-md border text-xs font-medium',
-        active ? 'border-accent bg-accent-soft text-fg' : open ? 'border-line-strong bg-hover text-fg' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg',
-      )}
-    >
+    <span className={cn('flex h-7 items-stretch rounded-md border text-xs font-medium', triggerTone(active, open))}>
       <button type="button" {...buttonProps} className="flex min-w-0 items-center gap-1 whitespace-nowrap pl-2 pr-1.5">
         {icon}
         {label}
@@ -100,6 +100,13 @@ function Trigger({ label, summary, open, onClear, icon, buttonProps }: TriggerPr
   );
 }
 
+type TriggerRender = ComponentProps<typeof Popover>['trigger'];
+
+/** The pop-over trigger of a filter: its button, open state and clear action. */
+function filterTrigger(label: string, summary: string | null, onClear: () => void, icon?: ReactNode): TriggerRender {
+  return (props, open) => <Trigger label={label} icon={icon} summary={summary} open={open} onClear={onClear} buttonProps={props} />;
+}
+
 interface SetFilterProps {
   field: SetField;
   options: FacetOption[];
@@ -108,7 +115,7 @@ interface SetFilterProps {
   defaultOpen?: boolean;
 }
 
-export function SetFilter({ field, options, condition = EMPTY_SET, onChange, defaultOpen }: SetFilterProps) {
+export function SetFilter({ field, options, condition = EMPTY_SET, onChange, defaultOpen }: Readonly<SetFilterProps>) {
   const [query, setQuery] = useState('');
   const include = new Set(condition.include);
   const exclude = new Set(condition.exclude);
@@ -140,15 +147,7 @@ export function SetFilter({ field, options, condition = EMPTY_SET, onChange, def
       label={`${field.label} filter`}
       className="w-72"
       defaultOpen={defaultOpen}
-      trigger={(props, open) => (
-        <Trigger
-          label={field.label}
-          summary={isSetActive(condition) ? summarizeSet(field, condition) : null}
-          open={open}
-          onClear={() => onChange(EMPTY_SET)}
-          buttonProps={props}
-        />
-      )}
+      trigger={filterTrigger(field.label, isSetActive(condition) ? summarizeSet(field, condition) : null, () => onChange(EMPTY_SET))}
     >
       {() => (
         <div className="flex max-h-[min(440px,70vh)] flex-col">
@@ -232,21 +231,17 @@ interface DateFilterProps {
   defaultOpen?: boolean;
 }
 
-export function DateFilter({ field, condition = EMPTY_DATE, onChange, defaultOpen }: DateFilterProps) {
+export function DateFilter({ field, condition = EMPTY_DATE, onChange, defaultOpen }: Readonly<DateFilterProps>) {
   return (
     <Popover
       label={`${field.label} date filter`}
       className="w-60"
       defaultOpen={defaultOpen}
-      trigger={(props, open) => (
-        <Trigger
-          label={field.label}
-          icon={<CalendarClock size={13} aria-hidden />}
-          summary={isDateActive(condition) ? summarizeDate(condition) : null}
-          open={open}
-          onClear={() => onChange(EMPTY_DATE)}
-          buttonProps={props}
-        />
+      trigger={filterTrigger(
+        field.label,
+        isDateActive(condition) ? summarizeDate(condition) : null,
+        () => onChange(EMPTY_DATE),
+        <CalendarClock size={13} aria-hidden />,
       )}
     >
       {() => (
@@ -294,15 +289,13 @@ interface TextFilterProps {
   defaultOpen?: boolean;
 }
 
-export function TextFilter({ field, value = '', onChange, defaultOpen }: TextFilterProps) {
+export function TextFilter({ field, value = '', onChange, defaultOpen }: Readonly<TextFilterProps>) {
   return (
     <Popover
       label={`${field.label} filter`}
       className="w-64 p-1.5"
       defaultOpen={defaultOpen}
-      trigger={(props, open) => (
-        <Trigger label={field.label} summary={isTextActive(value) ? value.trim() : null} open={open} onClear={() => onChange('')} buttonProps={props} />
-      )}
+      trigger={filterTrigger(field.label, isTextActive(value) ? value.trim() : null, () => onChange(''))}
     >
       {(close) => (
         <input

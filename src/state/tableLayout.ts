@@ -15,28 +15,42 @@ export const DEFAULT_TABLE_LAYOUT = (): TableLayout => ({
   columnSizing: {},
 });
 
-export function sanitizeTableLayout(stored: unknown, fallback: TableLayout = DEFAULT_TABLE_LAYOUT()): TableLayout {
-  if (!isRecord(stored)) return fallback;
+/** Keeps the saved order, drops unknown ids, appends columns added in a newer version. */
+function sanitizeOrder(stored: unknown): ColumnId[] {
+  const saved = Array.isArray(stored) ? [...new Set(stored.filter(isColumnId))] : [];
+  return [...saved, ...COLUMN_IDS.filter((id) => !saved.includes(id))];
+}
 
-  // Keep the saved order, drop unknown ids, append columns added in a newer version.
-  const saved = Array.isArray(stored.columnOrder) ? [...new Set(stored.columnOrder.filter(isColumnId))] : [];
-  const columnOrder = [...saved, ...COLUMN_IDS.filter((id) => !saved.includes(id))];
-
-  const columnVisibility: VisibilityState = { ...fallback.columnVisibility };
-  if (isRecord(stored.columnVisibility)) {
-    for (const [id, visible] of Object.entries(stored.columnVisibility)) {
+/** Saved visibility over the fallback; columns that cannot be hidden have no entry. */
+function sanitizeVisibility(stored: unknown, fallback: VisibilityState): VisibilityState {
+  const columnVisibility: VisibilityState = { ...fallback };
+  if (isRecord(stored)) {
+    for (const [id, visible] of Object.entries(stored)) {
       if (isColumnId(id) && typeof visible === 'boolean') columnVisibility[id] = visible;
     }
   }
   for (const id of COLUMN_IDS) if (!COLUMN_INFO[id].hideable) delete columnVisibility[id];
+  return columnVisibility;
+}
 
+/** Saved widths of known columns between 40 and 2000 pixels. */
+function sanitizeSizing(stored: unknown): ColumnSizingState {
   const columnSizing: ColumnSizingState = {};
-  if (isRecord(stored.columnSizing)) {
-    for (const [id, size] of Object.entries(stored.columnSizing)) {
+  if (isRecord(stored)) {
+    for (const [id, size] of Object.entries(stored)) {
       if (isColumnId(id) && typeof size === 'number' && size >= 40 && size <= 2000) columnSizing[id] = Math.round(size);
     }
   }
-  return { columnOrder, columnVisibility, columnSizing };
+  return columnSizing;
+}
+
+export function sanitizeTableLayout(stored: unknown, fallback: TableLayout = DEFAULT_TABLE_LAYOUT()): TableLayout {
+  if (!isRecord(stored)) return fallback;
+  return {
+    columnOrder: sanitizeOrder(stored.columnOrder),
+    columnVisibility: sanitizeVisibility(stored.columnVisibility, fallback.columnVisibility),
+    columnSizing: sanitizeSizing(stored.columnSizing),
+  };
 }
 
 export const tableLayoutStore = createPersistentStore<TableLayout>('table:v1', DEFAULT_TABLE_LAYOUT, sanitizeTableLayout);
@@ -47,7 +61,7 @@ export function moveColumn(id: ColumnId, delta: -1 | 1): void {
     const from = order.indexOf(id);
     const to = from + delta;
     if (from < 0 || to < 0 || to >= order.length) return layout;
-    [order[from], order[to]] = [order[to]!, order[from]!];
+    [order[from], order[to]] = [order[to], order[from]];
     return { ...layout, columnOrder: order };
   });
 }

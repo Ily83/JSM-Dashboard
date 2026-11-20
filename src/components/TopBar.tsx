@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Bell, BellRing, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, FlaskConical, LayoutGrid, LoaderCircle, Moon, RefreshCw, Sun } from 'lucide-react';
+import { Bell, BellRing, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, FlaskConical, LayoutGrid, LoaderCircle, Moon, RefreshCw, Sun, type LucideIcon } from 'lucide-react';
 import type { SyncMeta } from '../../shared/types';
 import { cn } from '../lib/cn';
 import { formatAbsolute, formatClock, formatRelative } from '../lib/format';
@@ -34,41 +34,60 @@ const iconButton = (active = false) =>
     active ? 'border-accent bg-accent-soft text-fg' : 'border-transparent text-muted hover:bg-hover hover:text-fg',
   );
 
-function SyncStatus({ meta, isFetching, requestError }: Pick<TopBarProps, 'meta' | 'isFetching' | 'requestError'>) {
-  const now = useNow();
-  const failed = requestError !== null || meta?.stale === true;
-  const last = meta?.lastSyncAt ?? null;
+type SyncProps = Pick<TopBarProps, 'meta' | 'isFetching' | 'requestError'>;
 
-  let text: string;
-  if (!meta && !requestError) text = 'Loading…';
-  else if (failed) text = last ? `Sync failed · last ${formatClock(last)}` : 'Sync failed';
-  else text = last ? `Synced ${formatRelative(last, now)}` : 'Not synced yet';
+/** The icon beside the sync text: spinning while a request runs, then failed or fine. */
+const SYNC_ICON = {
+  fetching: { Icon: LoaderCircle, className: 'spin' },
+  failed: { Icon: CircleAlert, className: 'text-crit' },
+  synced: { Icon: CircleCheck, className: 'text-ok' },
+} satisfies Record<string, { Icon: LucideIcon; className: string }>;
 
-  const tip = [
+function syncIcon(isFetching: boolean, failed: boolean) {
+  if (isFetching) return SYNC_ICON.fetching;
+  return failed ? SYNC_ICON.failed : SYNC_ICON.synced;
+}
+
+function syncText({ meta, requestError }: SyncProps, failed: boolean, last: number | null, now: number): string {
+  if (!meta && !requestError) return 'Loading…';
+  if (failed) return last ? `Sync failed · last ${formatClock(last)}` : 'Sync failed';
+  return last ? `Synced ${formatRelative(last, now)}` : 'Not synced yet';
+}
+
+function syncTip({ meta, requestError }: SyncProps, last: number | null): string {
+  return [
     last ? `Last successful sync: ${formatAbsolute(last)}` : 'No successful sync yet',
-    meta?.lastSyncDurationMs != null ? `Duration: ${meta.lastSyncDurationMs} ms` : '',
+    meta?.lastSyncDurationMs == null ? '' : `Duration: ${meta.lastSyncDurationMs} ms`,
     requestError ?? meta?.error ?? '',
   ]
     .filter(Boolean)
     .join('\n');
+}
 
-  const Icon = isFetching ? LoaderCircle : failed ? CircleAlert : CircleCheck;
+function SyncStatus(props: Readonly<SyncProps>) {
+  const { meta, isFetching, requestError } = props;
+  const now = useNow();
+  const failed = requestError !== null || meta?.stale === true;
+  const last = meta?.lastSyncAt ?? null;
+  const { Icon, className } = syncIcon(isFetching, failed);
   return (
-    <span
+    <output
       className={cn('flex items-center gap-1.5 whitespace-nowrap text-xs tabular-nums', failed ? 'font-medium text-crit' : 'text-muted')}
-      data-tip={tip}
+      data-tip={syncTip(props, last)}
       data-tip-always=""
-      role="status"
     >
-      <Icon size={14} aria-hidden className={cn('flex-none', isFetching ? 'spin' : failed ? 'text-crit' : 'text-ok')} />
-      {text}
-    </span>
+      <Icon size={14} aria-hidden className={cn('flex-none', className)} />
+      {syncText(props, failed, last, now)}
+    </output>
   );
 }
 
-const label = (seconds: number) => (seconds === 0 ? 'Off' : seconds < 60 ? `${seconds}s` : `${seconds / 60}m`);
+function label(seconds: number): string {
+  if (seconds === 0) return 'Off';
+  return seconds < 60 ? `${seconds}s` : `${seconds / 60}m`;
+}
 
-export function TopBar(props: TopBarProps) {
+export function TopBar(props: Readonly<TopBarProps>) {
   const { title, demo, refreshSeconds, onRefreshSecondsChange, onRefresh, isFetching, theme, onThemeChange, dashboard } = props;
   const dark = theme === 'dark' || (theme === 'system' && document.documentElement.dataset.theme === 'dark');
   const options = (REFRESH_OPTIONS as readonly number[]).includes(refreshSeconds)

@@ -33,12 +33,17 @@ function compactFilters(filters: Filters): CompactFilters | null {
     const entry: [string[], string[]?, 'all'?] = [c.include];
     if (c.exclude.length > 0 || c.match === 'all') entry.push(c.exclude);
     if (c.match === 'all') entry.push('all');
-    (out.s ??= {})[id] = entry;
+    out.s ??= {};
+    out.s[id] = entry;
   }
   for (const [id, c] of Object.entries(filters.date) as Array<[string, DateCondition]>) {
-    (out.d ??= {})[id] = c.preset === 'custom' ? [c.preset, c.from, c.to] : [c.preset];
+    out.d ??= {};
+    out.d[id] = c.preset === 'custom' ? [c.preset, c.from, c.to] : [c.preset];
   }
-  for (const [id, value] of Object.entries(filters.text) as Array<[string, string]>) (out.t ??= {})[id] = value;
+  for (const [id, value] of Object.entries(filters.text) as Array<[string, string]>) {
+    out.t ??= {};
+    out.t[id] = value;
+  }
   return out.s || out.d || out.t ? out : null;
 }
 
@@ -62,14 +67,17 @@ function expandFilters(compact: unknown): unknown {
 function toBase64Url(text: string): string {
   const bytes = new TextEncoder().encode(text);
   let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  for (const byte of bytes) binary += String.fromCodePoint(byte);
+  let encoded = btoa(binary).replaceAll('+', '-').replaceAll('/', '_');
+  while (encoded.endsWith('=')) encoded = encoded.slice(0, -1);
+  return encoded;
 }
 
 function fromBase64Url(value: string): string | null {
   try {
-    const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/'));
-    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+    const binary = atob(value.replaceAll('-', '+').replaceAll('_', '/'));
+    // atob returns one character per byte (0-255), so the code point is the byte.
+    const bytes = Uint8Array.from(binary, (ch) => ch.codePointAt(0)!);
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
     return null;

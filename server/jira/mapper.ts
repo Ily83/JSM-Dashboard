@@ -88,20 +88,16 @@ function addUnique(target: string[], seen: Set<string>, value: string | null): v
   target.push(value);
 }
 
-export function mapAlert(raw: RawAlert, ctx: MapContext, fromDetailEndpoint = false): AlertDetail {
-  const { rules } = ctx;
-  const rawTags = (raw.tags ?? []).filter((t) => typeof t === 'string' && t.trim() !== '');
-  const extraProperties = stringifyProperties(raw.extraProperties);
+type AddCustomer = (value: string | null) => void;
 
-  const customers: string[] = [];
-  const seenCustomers = new Set<string>();
+/** Customer tags go to `addCustomer`; returns the first service tag and the remaining tags. */
+function readTags(rawTags: string[], rules: ExtractionRules, addCustomer: AddCustomer): { service: string | null; otherTags: string[] } {
   const otherTags: string[] = [];
   let service: string | null = null;
-
   for (const tag of rawTags) {
     const customer = matchPrefix(tag, rules.customerTagPrefixes);
     if (customer) {
-      addUnique(customers, seenCustomers, customer);
+      addCustomer(customer);
       continue;
     }
     const tagService = matchPrefix(tag, rules.serviceTagPrefixes);
@@ -111,33 +107,58 @@ export function mapAlert(raw: RawAlert, ctx: MapContext, fromDetailEndpoint = fa
     }
     otherTags.push(tag);
   }
+  return { service, otherTags };
+}
 
+/** Customer properties go to `addCustomer`; returns the first service property. */
+function readProperties(extraProperties: Record<string, string>, rules: ExtractionRules, addCustomer: AddCustomer): string | null {
   const customerKeys = new Set(rules.customerPropertyKeys.map((k) => k.toLowerCase()));
   const serviceKeys = new Set(rules.servicePropertyKeys.map((k) => k.toLowerCase()));
+  let service: string | null = null;
   for (const [key, value] of Object.entries(extraProperties)) {
     const lower = key.toLowerCase();
     if (customerKeys.has(lower)) {
-      for (const part of value.split(/[,;|]/)) addUnique(customers, seenCustomers, clean(part));
+      for (const part of value.split(/[,;|]/)) addCustomer(clean(part));
     } else if (serviceKeys.has(lower)) {
       service ??= clean(value);
     }
   }
+  return service;
+}
+
+function mapResponder(r: NonNullable<RawAlert['responders']>[number], ctx: MapContext): Responder {
+  const type = (r.type ?? '').toLowerCase();
+  const responder: Responder = {
+    id: r.id,
+    type: (RESPONDER_TYPES.has(type) ? type : 'unknown') as ResponderType,
+  };
+  const name = type === 'team' ? ctx.teamNames.get(r.id) : ctx.otherNames?.get(r.id);
+  if (name) responder.name = name;
+  return responder;
+}
+
+export function mapAlert(raw: RawAlert, ctx: MapContext, fromDetailEndpoint = false): AlertDetail {
+  const { rules } = ctx;
+  const rawTags = (raw.tags ?? []).filter((t) => typeof t === 'string' && t.trim() !== '');
+  const extraProperties = stringifyProperties(raw.extraProperties);
+
+  // Customers from tags, then properties, then the customer map; unique regardless of case.
+  const customers: string[] = [];
+  const seenCustomers = new Set<string>();
+  const addCustomer: AddCustomer = (value) => addUnique(customers, seenCustomers, value);
+
+  const fromTags = readTags(rawTags, rules, addCustomer);
+  const fromProperties = readProperties(extraProperties, rules, addCustomer);
+  // A service tag wins over a service property.
+  let service = fromTags.service ?? fromProperties;
 
   const entity = clean(raw.entity);
-  for (const customer of ctx.customersForEntity?.(entity) ?? []) addUnique(customers, seenCustomers, customer);
+  for (const customer of ctx.customersForEntity?.(entity) ?? []) addCustomer(customer);
   if (!service && rules.serviceFallbackToEntity) service = entity;
   customers.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
-  const responders: Responder[] = (raw.responders ?? []).map((r) => {
-    const type = (r.type ?? '').toLowerCase();
-    const responder: Responder = {
-      id: r.id,
-      type: (RESPONDER_TYPES.has(type) ? type : 'unknown') as ResponderType,
-    };
-    const name = type === 'team' ? ctx.teamNames.get(r.id) : ctx.otherNames?.get(r.id);
-    if (name) responder.name = name;
-    return responder;
-  });
+  const responders: Responder[] = (raw.responders ?? []).map((r) => mapResponder(r, ctx));
+  const otherTags = fromTags.otherTags;
 
   const createdAt = toTime(raw.createdAt) ?? toTime(raw.updatedAt) ?? 0;
   const updatedAt = toTime(raw.updatedAt) ?? createdAt;

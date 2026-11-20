@@ -322,7 +322,7 @@ export function createApp(
       return;
     }
     const rawOffset = req.query.offset ?? '0';
-    const offset = typeof rawOffset === 'string' && /^\d+$/.test(rawOffset) ? Number(rawOffset) : NaN;
+    const offset = typeof rawOffset === 'string' && /^\d+$/.test(rawOffset) ? Number(rawOffset) : Number.NaN;
     if (offset > HISTORY_MAX_OFFSET || offset % HISTORY_PAGE_SIZE !== 0) {
       res.status(400).json({ error: 'Invalid history page.' } satisfies ApiError);
       return;

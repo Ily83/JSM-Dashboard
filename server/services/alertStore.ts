@@ -174,7 +174,7 @@ export class AlertStore {
     if (!this.snapshot) return;
     const list = [...this.snapshot.alerts.values()].map(toListItem);
     list.sort((a, b) => b.createdAt - a.createdAt || (a.id < b.id ? -1 : 1));
-    const version = createHash('sha1').update(JSON.stringify(list)).digest('hex').slice(0, 16);
+    const version = createHash('sha256').update(JSON.stringify(list)).digest('hex').slice(0, 16);
     if (version !== this.version) {
       this.version = version;
       this.list = list;

@@ -1,11 +1,11 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
-import { Layers, Rows2, Rows3, Rows4, SearchX, TriangleAlert } from 'lucide-react';
+import { Layers, Rows2, Rows3, Rows4, TriangleAlert } from 'lucide-react';
 import { BULK_ACTION_IDS } from '../shared/actions';
-import type { Alert } from '../shared/types';
-import { ApiRequestError } from './api/client';
+import type { Alert, SyncMeta } from '../shared/types';
 import { useAlerts, useStatus, useWriteActions } from './api/hooks';
 import { BulkActionBar } from './components/actions/BulkActions';
+import { AlertsEmptyState } from './components/AlertsEmptyState';
 import { useP1Alarm } from './components/useP1Alarm';
 import { requestDesktopPermission, unlockAudio } from './lib/alarm';
 import { CustomerScope } from './components/CustomerScope';
@@ -26,32 +26,65 @@ import { ViewsMenu } from './components/ViewsMenu';
 import { CopyLinkButton } from './components/CopyLinkButton';
 import { useViewUrlSync } from './state/viewUrlSync';
 import { QUICK_FILTERS, type QuickFilterContext, type QuickFilterId } from './config/quickFilters';
-import { SECTIONS, SECTION_IDS, inSection, type SectionId } from './config/sections';
+import { SECTIONS, SECTION_IDS, inSection, type SectionDef, type SectionId } from './config/sections';
 import { cn } from './lib/cn';
 import { formatClock } from './lib/format';
 import { customerOptions, scopeAlerts } from './lib/customerScope';
 import { buildFacets, filterAlerts } from './lib/filterEngine';
-import { navigate, useRoute } from './lib/router';
+import { navigate, useRoute, type Route } from './lib/router';
 import { computeStats } from './lib/stats';
 import { useStore } from './lib/store';
 import { dashboardStore, setDashboardCollapsed } from './state/dashboard';
-import { DENSITIES, patchPrefs, prefsStore, type Density } from './state/prefs';
-import { clearAllFilters, openSection, patchCurrentView, viewsStore, type ViewState } from './state/views';
+import { DENSITIES, patchPrefs, prefsStore } from './state/prefs';
+import { clearAllFilters, openSection, patchCurrentView, viewsStore, type ViewsData, type ViewState } from './state/views';
 
 const NO_ALERTS: Alert[] = [];
 const DENSITY_ICON = { compact: Rows4, comfortable: Rows3, spacious: Rows2 } as const;
 
 function useAppliedTheme(theme: 'dark' | 'light' | 'system'): void {
   useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: light)');
+    const media = globalThis.matchMedia('(prefers-color-scheme: light)');
+    const systemTheme = () => (media.matches ? 'light' : 'dark');
     const apply = () => {
-      document.documentElement.dataset.theme = theme === 'system' ? (media.matches ? 'light' : 'dark') : theme;
+      document.documentElement.dataset.theme = theme === 'system' ? systemTheme() : theme;
     };
     apply();
     if (theme !== 'system') return;
     media.addEventListener('change', apply);
     return () => media.removeEventListener('change', apply);
   }, [theme]);
+}
+
+/** Alerts per section, and per quick filter within the shown section. */
+function countAlerts(alerts: readonly Alert[], section: SectionDef, profile: QuickFilterContext) {
+  const sectionCounts = Object.fromEntries(SECTION_IDS.map((id) => [id, 0])) as Record<SectionId, number>;
+  const quickCounts = Object.fromEntries(QUICK_FILTERS.map((q) => [q.id, 0])) as Record<QuickFilterId, number>;
+  for (const alert of alerts) {
+    for (const id of SECTION_IDS) if (inSection(alert, SECTIONS[id])) sectionCounts[id] += 1;
+    if (!inSection(alert, section)) continue;
+    for (const quick of QUICK_FILTERS) if (quick.test(alert, profile)) quickCounts[quick.id] += 1;
+  }
+  return { sectionCounts, quickCounts, sectionTotal: sectionCounts[section.id] };
+}
+
+/** The banner text while the shown data is out of date, or null. */
+function staleNoticeText(meta: SyncMeta | undefined, hasAlerts: boolean, requestError: string | null): string | null {
+  if (meta?.stale) {
+    const shown = meta.lastSyncAt ? ` Showing data from ${formatClock(meta.lastSyncAt)}.` : '';
+    return `${meta.error ?? 'Synchronisation failed.'}${shown}`;
+  }
+  return hasAlerts && requestError ? requestError : null;
+}
+
+function pageTitle(page: Route['page'], views: ViewsData, sectionLabel: string): string {
+  if (page === 'settings') return 'Settings';
+  if (page === 'history') return 'Alert history';
+  return views.saved.find((v) => v.id === views.activeViewId)?.name ?? sectionLabel;
+}
+
+function alarmTip(on: boolean, sound: boolean, desktop: boolean): string {
+  if (!on) return 'P1 alarm off';
+  return `P1 alarm on: ${[sound && 'sound', desktop && 'desktop'].filter(Boolean).join(' + ')}`;
 }
 
 export function App() {
@@ -96,16 +129,7 @@ export function App() {
     [alerts, section, view.quick, view.filters, deferredSearch, profile],
   );
   const stats = useMemo(() => computeStats(alerts), [alerts]);
-  const { sectionCounts, quickCounts, sectionTotal } = useMemo(() => {
-    const sectionCounts = Object.fromEntries(SECTION_IDS.map((id) => [id, 0])) as Record<SectionId, number>;
-    const quickCounts = Object.fromEntries(QUICK_FILTERS.map((q) => [q.id, 0])) as Record<QuickFilterId, number>;
-    for (const alert of alerts) {
-      for (const id of SECTION_IDS) if (inSection(alert, SECTIONS[id])) sectionCounts[id] += 1;
-      if (!inSection(alert, section)) continue;
-      for (const quick of QUICK_FILTERS) if (quick.test(alert, profile)) quickCounts[quick.id] += 1;
-    }
-    return { sectionCounts, quickCounts, sectionTotal: sectionCounts[section.id] };
-  }, [alerts, section, profile]);
+  const { sectionCounts, quickCounts, sectionTotal } = useMemo(() => countAlerts(alerts, section, profile), [alerts, section, profile]);
 
   // ---- Selection for bulk actions ---------------------------------------
   const writeActions = useWriteActions();
@@ -163,61 +187,23 @@ export function App() {
     [prefs.timeFormat, prefs.showTags, prefs.showOccurrences, profile.watched],
   );
 
-  const requestError = alertsQuery.error instanceof ApiRequestError || alertsQuery.error ? (alertsQuery.error?.message ?? null) : null;
-  const firstLoad = alertsQuery.isPending;
-  const nextDensity = DENSITIES[(DENSITIES.indexOf(prefs.density) + 1) % DENSITIES.length] as Density;
+  const requestError = alertsQuery.error?.message ?? null;
+  const nextDensity = DENSITIES[(DENSITIES.indexOf(prefs.density) + 1) % DENSITIES.length];
   const DensityIcon = DENSITY_ICON[prefs.density];
 
-  let emptyState: React.ReactNode;
-  if (firstLoad) {
-    emptyState = (
-      <div className="grid w-full max-w-3xl gap-2" aria-busy="true" aria-label="Loading alerts">
-        {Array.from({ length: 8 }, (_, i) => (
-          <div key={i} className="skeleton h-5" style={{ width: `${100 - ((i * 13) % 35)}%` }} />
-        ))}
-      </div>
-    );
-  } else if (loadedAlerts.length === 0 && requestError) {
-    emptyState = (
-      <div className="max-w-md text-center">
-        <TriangleAlert size={28} aria-hidden className="mx-auto text-crit" />
-        <p className="mt-2 font-semibold">Alerts could not be loaded</p>
-        <p className="mt-1 text-muted">{requestError}</p>
-        <button type="button" onClick={alertsQuery.refresh} className="mt-3 h-7 rounded-md bg-accent px-3 text-xs font-semibold text-on-accent">
-          Try again
-        </button>
-      </div>
-    );
-  } else {
-    const needsCustomers = view.quick === 'myCustomers' && prefs.profile.customers.length === 0;
-    emptyState = (
-      <div className="max-w-md text-center">
-        <SearchX size={28} aria-hidden className="mx-auto text-subtle" />
-        <p className="mt-2 font-semibold">{needsCustomers ? 'No customers selected' : sectionTotal === 0 ? 'No alerts here' : 'No alerts match'}</p>
-        {needsCustomers ? (
-          <a href="#/settings" className="mt-2 inline-block text-xs font-medium text-accent hover:underline">
-            Choose your customers in Settings
-          </a>
-        ) : sectionTotal > 0 ? (
-          <button type="button" onClick={clearAllFilters} className="mt-2 text-xs font-medium text-accent hover:underline">
-            Clear all filters
-          </button>
-        ) : (
-          customerScope.length > 0 && (
-            <button type="button" onClick={() => patchPrefs({ customerScope: [] })} className="mt-2 text-xs font-medium text-accent hover:underline">
-              Show all customers
-            </button>
-          )
-        )}
-      </div>
-    );
-  }
+  const emptyState = (
+    <AlertsEmptyState
+      loading={alertsQuery.isPending}
+      hasAlerts={loadedAlerts.length > 0}
+      requestError={requestError}
+      onRetry={alertsQuery.refresh}
+      needsCustomers={view.quick === 'myCustomers' && prefs.profile.customers.length === 0}
+      sectionTotal={sectionTotal}
+      scoped={customerScope.length > 0}
+    />
+  );
 
-  const staleNotice = meta?.stale
-    ? `${meta.error ?? 'Synchronisation failed.'}${meta.lastSyncAt ? ` Showing data from ${formatClock(meta.lastSyncAt)}.` : ''}`
-    : loadedAlerts.length > 0 && requestError
-      ? requestError
-      : null;
+  const staleNotice = staleNoticeText(meta, loadedAlerts.length > 0, requestError);
 
   return (
     <div className="flex h-full">
@@ -233,7 +219,7 @@ export function App() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
-          title={route.page === 'settings' ? 'Settings' : onHistory ? 'Alert history' : (views.saved.find((v) => v.id === views.activeViewId)?.name ?? section.label)}
+          title={pageTitle(route.page, views, section.label)}
           demo={(meta?.mode ?? status.data?.mode) === 'demo'}
           meta={meta}
           isFetching={alertsQuery.isFetching}
@@ -246,7 +232,7 @@ export function App() {
           showLiveControls={!onHistory}
           alarm={{
             on: alarmOn,
-            tip: alarmOn ? `P1 alarm on: ${[prefs.p1Sound && 'sound', prefs.p1Desktop && 'desktop'].filter(Boolean).join(' + ')}` : 'P1 alarm off',
+            tip: alarmTip(alarmOn, prefs.p1Sound, prefs.p1Desktop),
             onToggle: toggleAlarm,
           }}
           scope={
@@ -276,21 +262,21 @@ export function App() {
           </div>
         )}
         {!onHistory && meta?.truncated && (
-          <div role="status" className="flex-none border-b border-warn/40 bg-warn-soft px-3 py-1.5 text-xs">
+          <output className="block flex-none border-b border-warn/40 bg-warn-soft px-3 py-1.5 text-xs">
             {status.data ? `Jira holds more open alerts than the configured limit. Showing the newest ${status.data.limits.maxOpenAlerts.toLocaleString()}.` : 'The live list is limited to the newest open alerts.'}{' '}
             <a href="#/history" className="font-semibold underline">Browse alert history</a>
-          </div>
+          </output>
         )}
 
-        {route.page === 'settings' ? (
+        {route.page === 'settings' && (
           <SettingsView
             status={status.data}
             assignees={facets.assignee.map((o) => o.value).filter(Boolean)}
             customers={scopeOptions.filter((o) => o.total > 0).map((o) => o.name)}
           />
-        ) : onHistory ? (
-          <HistoryView />
-        ) : (
+        )}
+        {onHistory && <HistoryView />}
+        {route.page === 'alerts' && (
           <div className="relative flex min-h-0 flex-1">
             <main className="flex min-w-0 flex-1 flex-col">
               <Dashboard
