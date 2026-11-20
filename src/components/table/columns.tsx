@@ -45,7 +45,7 @@ const NO_TAGS: string[] = [];
 const Dash = () => <span className="text-subtle">–</span>;
 
 /** Relative time that keeps itself current; the exact time is in the tooltip. */
-function RelativeTime({ ms }: { ms: number }) {
+function RelativeTime({ ms }: Readonly<{ ms: number }>) {
   const now = useNow();
   return (
     <span className="truncate tabular-nums" data-tip={formatAbsolute(ms)} data-tip-always="">
@@ -54,7 +54,7 @@ function RelativeTime({ ms }: { ms: number }) {
   );
 }
 
-function TimeCell({ ms, format }: { ms: number; format: CellOptions['timeFormat'] }) {
+function TimeCell({ ms, format }: Readonly<{ ms: number; format: CellOptions['timeFormat'] }>) {
   if (!ms) return <Dash />;
   if (format === 'relative') return <RelativeTime ms={ms} />;
   const text = formatAbsolute(ms);
@@ -81,7 +81,7 @@ const CustomersCell = memo(function CustomersCell({ customers, tags, width }: { 
   let shown = 0;
   for (let i = 0; i < total; i += 1) {
     const isCustomer = i < customers.length;
-    const text = isCustomer ? customers[i]! : tags[i - customers.length]!;
+    const text = isCustomer ? customers[i] : tags[i - customers.length];
     const itemWidth = (isCustomer ? text.length * 7.1 + 15 : text.length * 6.1 + 13) + 4;
     const reserve = i < total - 1 ? MORE : 0;
     if (used + itemWidth + reserve > available && shown > 0) break;
@@ -117,7 +117,7 @@ const CustomersCell = memo(function CustomersCell({ customers, tags, width }: { 
   );
 });
 
-function AssigneeCell({ alert }: { alert: Alert }) {
+function AssigneeCell({ alert }: Readonly<{ alert: Alert }>) {
   const teams = alert.responders
     .map((r) => r.name)
     .filter(Boolean)

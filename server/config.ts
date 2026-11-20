@@ -194,9 +194,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   let jira: JiraConfig | null = null;
   if (!demoForced && missing.length === 0) {
     const site = normaliseSiteUrl(e.JIRA_SITE_URL!);
-    if (!site) {
-      warnings.push('JIRA_SITE_URL is not a valid https URL. Running in demo mode.');
-    } else {
+    if (site) {
       jira = {
         ...site,
         cloudId: e.JIRA_CLOUD_ID ?? null,
@@ -215,6 +213,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         enrichMaxPerSync: e.JIRA_ENRICH_MAX_PER_SYNC,
         writeActions: writes.actions,
       };
+    } else {
+      warnings.push('JIRA_SITE_URL is not a valid https URL. Running in demo mode.');
     }
   } else if (!demoForced && missing.length < 3) {
     warnings.push(

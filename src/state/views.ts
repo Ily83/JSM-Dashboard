@@ -312,7 +312,7 @@ export function moveView(id: string, delta: -1 | 1): void {
     const from = saved.findIndex((v) => v.id === id);
     const to = from + delta;
     if (from < 0 || to < 0 || to >= saved.length) return data;
-    [saved[from], saved[to]] = [saved[to]!, saved[from]!];
+    [saved[from], saved[to]] = [saved[to], saved[from]];
     return { ...data, saved };
   });
 }
@@ -320,6 +320,6 @@ export function moveView(id: string, delta: -1 | 1): void {
 /** Called once at start-up: opening the application without an address shows the default view. */
 export function applyDefaultViewOnStart(): void {
   const { defaultViewId } = viewsStore.get();
-  const hash = window.location.hash.replace(/^#\/?/, '');
+  const hash = globalThis.location.hash.replace(/^#\/?/, '');
   if (defaultViewId && hash === '') applyView(defaultViewId);
 }

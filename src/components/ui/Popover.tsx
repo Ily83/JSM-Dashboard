@@ -17,12 +17,15 @@ interface PopoverProps {
   onOpenChange?: (open: boolean) => void;
 }
 
+/** What the trigger receives, for triggers rendered outside the component that uses the popover. */
+export type PopoverTriggerProps = Parameters<PopoverProps['trigger']>[0];
+
 /** Click-to-open panel anchored to its trigger. Closes on outside click and Escape. */
-export function Popover({ trigger, children, align = 'start', label, className, defaultOpen = false, onOpenChange }: PopoverProps) {
-  const [open, setOpenState] = useState(defaultOpen);
-  const setOpen = (next: boolean | ((value: boolean) => boolean)) => {
+export function Popover({ trigger, children, align = 'start', label, className, defaultOpen = false, onOpenChange }: Readonly<PopoverProps>) {
+  const [open, setOpen] = useState(defaultOpen);
+  const changeOpen = (next: boolean | ((value: boolean) => boolean)) => {
     const value = typeof next === 'function' ? next(open) : next;
-    setOpenState(value);
+    setOpen(value);
     onOpenChange?.(value);
   };
   const root = useRef<HTMLDivElement>(null);
@@ -31,12 +34,12 @@ export function Popover({ trigger, children, align = 'start', label, className, 
   useEffect(() => {
     if (!open) return;
     const onPointer = (event: PointerEvent) => {
-      if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
+      if (root.current && !root.current.contains(event.target as Node)) changeOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.stopPropagation();
-      setOpen(false);
+      changeOpen(false);
       root.current?.querySelector<HTMLElement>('button')?.focus();
     };
     document.addEventListener('pointerdown', onPointer);
@@ -50,7 +53,7 @@ export function Popover({ trigger, children, align = 'start', label, className, 
   return (
     <div ref={root} className="relative">
       {trigger(
-        { 'aria-expanded': open, 'aria-controls': id, 'aria-haspopup': 'dialog', onClick: () => setOpen((v) => !v) },
+        { 'aria-expanded': open, 'aria-controls': id, 'aria-haspopup': 'dialog', onClick: () => changeOpen((v) => !v) },
         open,
       )}
       {open && (
@@ -64,7 +67,7 @@ export function Popover({ trigger, children, align = 'start', label, className, 
             className,
           )}
         >
-          {children(() => setOpen(false))}
+          {children(() => changeOpen(false))}
         </div>
       )}
     </div>

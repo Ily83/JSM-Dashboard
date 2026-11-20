@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { CircleHelp, FilterX, Plus, Search, TriangleAlert, X } from 'lucide-react';
 import {
   FILTER_FIELDS,
@@ -16,6 +16,7 @@ import {
   withDate,
   withSet,
   withText,
+  type FacetOption,
   type Facets,
   type Filters,
   type SetCondition,
@@ -48,6 +49,88 @@ const segment = (active: boolean) =>
     'flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium',
     active ? 'border-accent bg-accent text-on-accent' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg',
   );
+
+type TriggerRender = ComponentProps<typeof Popover>['trigger'];
+
+/** The values a section allows for a field it restricts (priority or status). */
+function sectionValues(section: SectionDef, id: SetFieldId): readonly string[] | undefined {
+  if (id === 'priority') return section.priority;
+  if (id === 'status') return section.status;
+  return undefined;
+}
+
+/** "My Customers" and "Watching" appear once there is something to show. */
+function hasContent(id: QuickFilterId, profile: Profile, quickCounts: Record<QuickFilterId, number>): boolean {
+  if (id === 'myCustomers') return profile.customers.length > 0;
+  if (id === 'watching') return quickCounts.watching > 0;
+  return true;
+}
+
+function searchBorder(queryCheck: ReturnType<typeof checkQuery>): string {
+  if (!queryCheck.ok) return 'border-crit';
+  return queryCheck.structured ? 'border-accent font-mono' : 'border-line-strong';
+}
+
+/** "Assigned to Me" before the user's name is known: the radio opens a name picker. */
+function chooseNameTrigger(label: string): TriggerRender {
+  return (props) => (
+    <button type="button" role="radio" aria-checked={false} {...props} className={segment(false)}>
+      {label}
+    </button>
+  );
+}
+
+/** Asks once who "me" is, from the assignees in the data, for "Assigned to Me". */
+function ChooseName({ label, assignees, onPick }: Readonly<{ label: string; assignees: FacetOption[]; onPick: (name: string) => void }>) {
+  return (
+    <Popover label="Choose your name" className="w-56" trigger={chooseNameTrigger(label)}>
+      {(close) => (
+        <div className="p-1">
+          <p className="px-2 py-1 text-[11px] font-medium text-muted">Who are you?</p>
+          <ul className="max-h-64 overflow-auto">
+            {assignees
+              .filter((o) => o.value !== '')
+              .map((o) => (
+                <li key={o.value}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onPick(o.value);
+                      close();
+                    }}
+                    className="w-full truncate rounded px-2 py-1 text-left hover:bg-hover"
+                  >
+                    {o.value}
+                  </button>
+                </li>
+              ))}
+          </ul>
+          <button
+            type="button"
+            onClick={() => navigate({ page: 'settings' })}
+            className="mt-1 w-full rounded border-t border-line px-2 py-1 text-left text-xs text-accent hover:bg-hover"
+          >
+            Other name…
+          </button>
+        </div>
+      )}
+    </Popover>
+  );
+}
+
+const moreTrigger: TriggerRender = (props, open) => (
+  <button
+    type="button"
+    {...props}
+    className={cn(
+      'flex h-7 items-center gap-1 rounded-md border border-dashed border-line-strong px-2 text-xs font-medium',
+      open ? 'bg-hover text-fg' : 'text-muted hover:bg-hover hover:text-fg',
+    )}
+  >
+    <Plus size={13} aria-hidden />
+    More
+  </button>
+);
 
 export const FilterBar = memo(function FilterBar({
   section,
@@ -98,17 +181,17 @@ export const FilterBar = memo(function FilterBar({
   /** Within a section that restricts a field, selections outside the restriction are not shown. */
   const scoped = (id: SetFieldId): SetCondition | undefined => {
     const condition = filters.set[id];
-    const allowed: readonly string[] | undefined = id === 'priority' ? section.priority : id === 'status' ? section.status : undefined;
+    const allowed = sectionValues(section, id);
     if (!condition || !allowed) return condition;
     return { ...condition, include: condition.include.filter((v) => allowed.includes(v)), exclude: condition.exclude.filter((v) => allowed.includes(v)) };
   };
 
-  // "My Customers" and "Watching" appear once there is something to show.
-  const quickFilters = QUICK_FILTERS.filter(
-    (q) =>
-      quick === q.id ||
-      (q.id === 'myCustomers' ? profile.customers.length > 0 : q.id === 'watching' ? quickCounts.watching > 0 : true),
-  );
+  const quickFilters = QUICK_FILTERS.filter((q) => quick === q.id || hasContent(q.id, profile, quickCounts));
+
+  const addField = (id: FilterFieldId) => {
+    setExtra((ids) => [...ids, id]);
+    setJustAdded(id);
+  };
 
   return (
     <div className="border-y border-line bg-panel">
@@ -130,11 +213,11 @@ export const FilterBar = memo(function FilterBar({
             aria-label="Search alerts"
             aria-keyshortcuts="/"
             aria-invalid={!queryCheck.ok || undefined}
-            aria-describedby={!queryCheck.ok ? 'search-error' : undefined}
+            aria-describedby={queryCheck.ok ? undefined : 'search-error'}
             spellCheck={false}
             className={cn(
               'h-7 w-full rounded-md border bg-bg pl-7 pr-7 text-xs text-fg placeholder:text-subtle [&::-webkit-search-cancel-button]:hidden',
-              !queryCheck.ok ? 'border-crit' : queryCheck.structured ? 'border-accent font-mono' : 'border-line-strong',
+              searchBorder(queryCheck),
             )}
           />
           {search ? (
@@ -185,48 +268,15 @@ export const FilterBar = memo(function FilterBar({
               if (needsName) {
                 // "Assigned to Me" needs to know who "me" is: ask once.
                 return (
-                  <Popover
+                  <ChooseName
                     key={q.id}
-                    label="Choose your name"
-                    className="w-56"
-                    trigger={(props) => (
-                      <button type="button" role="radio" aria-checked={false} {...props} className={segment(false)}>
-                        {q.label}
-                      </button>
-                    )}
-                  >
-                    {(close) => (
-                      <div className="p-1">
-                        <p className="px-2 py-1 text-[11px] font-medium text-muted">Who are you?</p>
-                        <ul className="max-h-64 overflow-auto">
-                          {facets.assignee
-                            .filter((o) => o.value !== '')
-                            .map((o) => (
-                              <li key={o.value}>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    patchPrefs({ profile: { ...profile, name: o.value } });
-                                    onChange({ quick: 'mine' });
-                                    close();
-                                  }}
-                                  className="w-full truncate rounded px-2 py-1 text-left hover:bg-hover"
-                                >
-                                  {o.value}
-                                </button>
-                              </li>
-                            ))}
-                        </ul>
-                        <button
-                          type="button"
-                          onClick={() => navigate({ page: 'settings' })}
-                          className="mt-1 w-full rounded border-t border-line px-2 py-1 text-left text-xs text-accent hover:bg-hover"
-                        >
-                          Other name…
-                        </button>
-                      </div>
-                    )}
-                  </Popover>
+                    label={q.label}
+                    assignees={facets.assignee}
+                    onPick={(name) => {
+                      patchPrefs({ profile: { ...profile, name } });
+                      onChange({ quick: 'mine' });
+                    }}
+                  />
                 );
               }
               return (
@@ -293,19 +343,7 @@ export const FilterBar = memo(function FilterBar({
           <Popover
             label="More filters"
             className="w-48 p-1"
-            trigger={(props, open) => (
-              <button
-                type="button"
-                {...props}
-                className={cn(
-                  'flex h-7 items-center gap-1 rounded-md border border-dashed border-line-strong px-2 text-xs font-medium',
-                  open ? 'bg-hover text-fg' : 'text-muted hover:bg-hover hover:text-fg',
-                )}
-              >
-                <Plus size={13} aria-hidden />
-                More
-              </button>
-            )}
+            trigger={moreTrigger}
           >
             {(close) => (
               <ul>
@@ -314,8 +352,7 @@ export const FilterBar = memo(function FilterBar({
                     <button
                       type="button"
                       onClick={() => {
-                        setExtra((ids) => [...ids, field.id as FilterFieldId]);
-                        setJustAdded(field.id as FilterFieldId);
+                        addField(field.id as FilterFieldId);
                         close();
                       }}
                       className="w-full rounded px-2 py-1 text-left hover:bg-hover"

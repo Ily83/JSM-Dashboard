@@ -38,7 +38,7 @@ export function HistoryView() {
     setOffset(0);
   };
 
-  const analysedRange = analysis && windows.length > 0 ? { from: windows.at(-1)!.from, to: windows[0]!.to } : { from, to };
+  const analysedRange = analysis && windows.length > 0 ? { from: windows.at(-1)!.from, to: windows[0].to } : { from, to };
 
   const openInvestigation = (investigation: HistoryInvestigation) => {
     // Saved dates may have fallen out of the 12-month window since they were saved.
@@ -77,7 +77,7 @@ export function HistoryView() {
               return;
             }
             setInputError('');
-            const submitter = (event.nativeEvent as SubmitEvent).submitter;
+            const submitter = event.nativeEvent.submitter;
             const analyze = submitter instanceof HTMLButtonElement && submitter.value === 'analysis';
             setAnalysis(analyze);
             const next = historyWindows(start, end);
@@ -86,11 +86,11 @@ export function HistoryView() {
             if (!analysis && !analyze && next[0]?.from === selected?.from && next[0]?.to === selected?.to && offset === 0) void query.refetch();
           }}>
             <label className="grid gap-1">
-              From
+              {'From'}
               <input type="date" className={dateInput} min={earliest} max={today} required value={from} onChange={(event) => setFrom(event.target.value)} />
             </label>
             <label className="grid gap-1">
-              To
+              {'To'}
               <input type="date" className={dateInput} min={earliest} max={today} required value={to} onChange={(event) => setTo(event.target.value)} />
             </label>
             <button type="button" className={button} onClick={() => { setFrom(earliest); setTo(today); setInputError(''); }}>Past 12 months</button>
@@ -109,9 +109,9 @@ export function HistoryView() {
 
       {selected && analysis ? (
         <HistoryAnalysis
-          key={`${windows.at(-1)!.from}/${windows[0]!.to}`}
+          key={`${windows.at(-1)!.from}/${windows[0].to}`}
           from={windows.at(-1)!.from}
-          to={windows[0]!.to}
+          to={windows[0].to}
           settings={settings}
           onSettingsChange={(patch) => setSettings((current) => ({ ...current, ...patch }))}
         />
@@ -129,7 +129,7 @@ export function HistoryView() {
             <span className="text-xs tabular-nums text-muted">Page {offset / HISTORY_PAGE_SIZE + 1}</span>
             <button type="button" className={button} disabled={!result?.hasNext} onClick={() => setOffset(offset + HISTORY_PAGE_SIZE)}>Next page</button>
           </div>
-          {query.isFetching && <p role="status" className="p-3 text-sm text-muted">Loading history…</p>}
+          {query.isFetching && <output className="block p-3 text-sm text-muted">Loading history…</output>}
           {query.error && (
             <div role="alert" className="flex flex-wrap items-center gap-2 p-3 text-sm text-crit">
               {query.error.message}
@@ -137,11 +137,11 @@ export function HistoryView() {
             </div>
           )}
           {result?.truncated && (
-            <p role="status" className="bg-warn-soft p-3 text-sm text-warn">
+            <output className="block bg-warn-soft p-3 text-sm text-warn">
               This date window exceeds the pagination limit. Select a shorter range to see all available alerts.
-            </p>
+            </output>
           )}
-          {!!result?.skipped && <p role="status" className="p-3 text-sm text-warn">Some alert records could not be read on this page.</p>}
+          {!!result?.skipped && <output className="block p-3 text-sm text-warn">Some alert records could not be read on this page.</output>}
           {result && (result.alerts.length === 0 ? (
             <p className="p-3 text-sm text-muted">No displayable alerts on this page.</p>
           ) : (

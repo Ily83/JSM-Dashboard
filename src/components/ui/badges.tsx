@@ -51,6 +51,6 @@ export const CustomerBadge = memo(function CustomerBadge({ name, className }: { 
   );
 });
 
-export function TagChip({ tag }: { tag: string }) {
+export function TagChip({ tag }: Readonly<{ tag: string }>) {
   return <span className="tag-chip">{tag}</span>;
 }

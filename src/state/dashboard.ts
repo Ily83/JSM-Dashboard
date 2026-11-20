@@ -63,7 +63,7 @@ export function resizeWidget(id: WidgetId, w: number, h: number): void {
   const def = WIDGET_BY_ID[id];
   const current = dashboardStore.get().widgets.find((p) => p.id === id);
   const next = { w: clamp(w, def.minW, Math.min(def.maxW, GRID_COLUMNS)), h: clamp(h, def.minH, def.maxH) };
-  if (current && current.w === next.w && current.h === next.h) return;
+  if (current?.w === next.w && current.h === next.h) return;
   patchWidget(id, next);
 }
 
@@ -88,7 +88,7 @@ export function shiftWidget(id: WidgetId, delta: -1 | 1): void {
     const from = widgets.findIndex((w) => w.id === id);
     const to = from + delta;
     if (from < 0 || to < 0 || to >= widgets.length) return layout;
-    [widgets[from], widgets[to]] = [widgets[to]!, widgets[from]!];
+    [widgets[from], widgets[to]] = [widgets[to], widgets[from]];
     return { ...layout, widgets };
   });
 }

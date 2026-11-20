@@ -4,7 +4,7 @@ import { cn } from '../lib/cn';
 import { isInScope, toggleScope, type CustomerOption } from '../lib/customerScope';
 import { MAX_SCOPE_CUSTOMERS } from '../state/prefs';
 import { CustomerBadge } from './ui/badges';
-import { Popover } from './ui/Popover';
+import { Popover, type PopoverTriggerProps } from './ui/Popover';
 
 interface CustomerScopeProps {
   options: CustomerOption[];
@@ -15,15 +15,43 @@ interface CustomerScopeProps {
   onChange: (scope: string[]) => void;
 }
 
+function scopeLabel(scope: readonly string[]): string {
+  if (scope.length === 0) return 'All customers';
+  if (scope.length === 1) return scope[0];
+  return `${scope[0]} +${scope.length - 1}`;
+}
+
+/** The chip that opens the scope popover. */
+function renderScopeButton(props: PopoverTriggerProps, open: boolean, scope: readonly string[]) {
+  const scoped = scope.length > 0;
+  const tip = scoped ? `Dashboard and table: ${scope.join(', ')}` : 'Dashboard and table: all customers';
+  return (
+    <button
+      type="button"
+      {...props}
+      data-tip={tip}
+      data-tip-always=""
+      aria-label={`Customer scope: ${scoped ? scope.join(', ') : 'all customers'}`}
+      className={cn(
+        'flex h-7 max-w-56 items-center gap-1.5 border px-2 text-xs font-medium',
+        scoped ? 'rounded-l-md border-accent bg-accent-soft text-fg' : 'rounded-md',
+        !scoped && (open ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg'),
+      )}
+    >
+      <Building2 size={14} aria-hidden className={cn('flex-none', scoped && 'text-accent')} />
+      <span className="truncate max-md:hidden">{scopeLabel(scope)}</span>
+      <ChevronDown size={12} aria-hidden className="flex-none text-subtle max-md:hidden" />
+    </button>
+  );
+}
+
 /**
  * The customer scope chip. Shows whether dashboard and table cover all
  * customers or a selection, and changes it without touching the saved views.
  */
-export function CustomerScope({ options, scope, myCustomers, onChange }: CustomerScopeProps) {
+export function CustomerScope({ options, scope, myCustomers, onChange }: Readonly<CustomerScopeProps>) {
   const [query, setQuery] = useState('');
   const scoped = scope.length > 0;
-  const label = !scoped ? 'All customers' : scope.length === 1 ? scope[0]! : `${scope[0]} +${scope.length - 1}`;
-  const tip = scoped ? `Dashboard and table: ${scope.join(', ')}` : 'Dashboard and table: all customers';
   const needle = query.trim().toLowerCase();
   const shown = needle ? options.filter((o) => o.name.toLowerCase().includes(needle)) : options;
   const sameAsMine =
@@ -37,24 +65,7 @@ export function CustomerScope({ options, scope, myCustomers, onChange }: Custome
         onOpenChange={(open) => {
           if (!open) setQuery('');
         }}
-        trigger={(props, open) => (
-          <button
-            type="button"
-            {...props}
-            data-tip={tip}
-            data-tip-always=""
-            aria-label={`Customer scope: ${scoped ? scope.join(', ') : 'all customers'}`}
-            className={cn(
-              'flex h-7 max-w-56 items-center gap-1.5 border px-2 text-xs font-medium',
-              scoped ? 'rounded-l-md border-accent bg-accent-soft text-fg' : 'rounded-md',
-              !scoped && (open ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg'),
-            )}
-          >
-            <Building2 size={14} aria-hidden className={cn('flex-none', scoped && 'text-accent')} />
-            <span className="truncate max-md:hidden">{label}</span>
-            <ChevronDown size={12} aria-hidden className="flex-none text-subtle max-md:hidden" />
-          </button>
-        )}
+        trigger={(props, open) => renderScopeButton(props, open, scope)}
       >
         {() => (
           <div className="flex max-h-[70vh] flex-col">

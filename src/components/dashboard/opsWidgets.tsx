@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, CircleCheck, HeartPulse, Loader2, Plus, ShieldAlert, TriangleAlert, UserRound, Users, Wrench, X } from 'lucide-react';
 import {
   MAINTENANCE_DESCRIPTION_MAX,
-  MAINTENANCE_MAX_DAYS,
+  type Heartbeat,
   type Maintenance,
   type MaintenanceRule,
   type MaintenanceTarget,
   type OnCallParticipant,
+  type OnCallSchedule,
 } from '../../../shared/opsContext';
 import { useWriteActions } from '../../api/hooks';
 import {
@@ -19,8 +20,8 @@ import {
   useOnCall,
 } from '../../api/opsContext';
 import { cn } from '../../lib/cn';
-import { formatAge } from '../../lib/format';
 import { useNow } from '../../lib/now';
+import { maintenanceSummary, maintenanceTimeError, maintenanceTiming, rulesLabel, scopeLabel, submitLabel, when } from './maintenanceText';
 
 /**
  * Widgets for the Jira Operations context: maintenance windows (with a form
@@ -28,21 +29,7 @@ import { useNow } from '../../lib/now';
  * They fetch only while shown (see api/opsContext.ts).
  */
 
-const short = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
-const dayShort = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-
-function when(ms: number | null, now: number): string {
-  if (!ms) return '–';
-  const sameDay = new Date(ms).toDateString() === new Date(now).toDateString();
-  return sameDay ? short.format(ms) : dayShort.format(ms);
-}
-
-/** "in 1h 40m" for a future time. */
-function inTime(ms: number, now: number): string {
-  return `in ${formatAge(now - Math.max(0, ms - now), now)}`;
-}
-
-function OpsPanel({ title, icon, action, children }: { title: string; icon: ReactNode; action?: ReactNode; children: ReactNode }) {
+function OpsPanel({ title, icon, action, children }: Readonly<{ title: string; icon: ReactNode; action?: ReactNode; children: ReactNode }>) {
   return (
     <section className="flex h-full min-w-0 flex-col rounded-md border border-line bg-panel">
       <div className="flex flex-none items-center gap-1.5 px-3 pb-1 pt-2">
@@ -55,13 +42,21 @@ function OpsPanel({ title, icon, action, children }: { title: string; icon: Reac
   );
 }
 
-function Quiet({ children, tone = 'muted' }: { children: ReactNode; tone?: 'muted' | 'ok' | 'warn' }) {
+const QUIET_TONE = { muted: 'text-subtle', ok: 'text-ok', warn: 'text-warn' } as const;
+
+function Quiet({ children, tone = 'muted' }: Readonly<{ children: ReactNode; tone?: keyof typeof QUIET_TONE }>) {
+  return <p className={cn('flex items-center gap-1.5 px-1.5 py-1 text-xs', QUIET_TONE[tone])}>{children}</p>;
+}
+
+function Loading() {
   return (
-    <p className={cn('flex items-center gap-1.5 px-1.5 py-1 text-xs', tone === 'ok' ? 'text-ok' : tone === 'warn' ? 'text-warn' : 'text-subtle')}>{children}</p>
+    <Quiet>
+      <Loader2 size={12} aria-hidden className="spin" /> Loading…
+    </Quiet>
   );
 }
 
-function Failed({ error }: { error: Error }) {
+function Failed({ error }: Readonly<{ error: Error }>) {
   return (
     <p className="flex items-start gap-1.5 px-1.5 py-1 text-xs text-warn" data-tip={error.message} data-tip-always="">
       <TriangleAlert size={12} aria-hidden className="mt-0.5 flex-none" />
@@ -70,15 +65,9 @@ function Failed({ error }: { error: Error }) {
   );
 }
 
-function rulesLabel(rules: Maintenance['rules']): string {
-  if (rules.length === 0) return 'No rules';
-  const named = rules.map((r) => `${r.state === 'enabled' ? '+' : ''}${r.name ?? r.entity.type}`);
-  return named.length <= 2 ? named.join(', ') : `${named.slice(0, 2).join(', ')} +${named.length - 2}`;
-}
-
 // ---- Maintenance windows -----------------------------------------------------------
 
-function MaintenanceRow({ m, canCancel }: { m: Maintenance; canCancel: boolean }) {
+function MaintenanceRow({ m, canCancel }: Readonly<{ m: Maintenance; canCancel: boolean }>) {
   const now = useNow();
   const cancel = useCancelMaintenance();
   const [confirm, setConfirm] = useState(false);
@@ -101,9 +90,7 @@ function MaintenanceRow({ m, canCancel }: { m: Maintenance; canCancel: boolean }
         <span className="min-w-0 flex-1 truncate text-xs font-medium" data-tip={tip} data-tip-always="">
           {m.description || 'Maintenance'}
         </span>
-        <span className="flex-none text-[11px] tabular-nums text-muted">
-          {active ? (m.endDate ? `ends ${inTime(m.endDate, now)}` : 'active') : m.startDate ? when(m.startDate, now) : 'planned'}
-        </span>
+        <span className="flex-none text-[11px] tabular-nums text-muted">{maintenanceTiming(m, now)}</span>
         {canCancel &&
           (confirm ? (
             <span className="flex flex-none items-center gap-0.5">
@@ -142,11 +129,30 @@ function MaintenanceRow({ m, canCancel }: { m: Maintenance; canCancel: boolean }
   );
 }
 
+function MaintenanceList({ query, canCancel }: Readonly<{ query: ReturnType<typeof useMaintenances>; canCancel: boolean }>) {
+  if (query.isPending) return <Loading />;
+  if (query.error && !query.data) return <Failed error={query.error} />;
+  const list = query.data?.maintenances ?? [];
+  if (list.length === 0) {
+    return (
+      <Quiet tone="ok">
+        <CircleCheck size={12} aria-hidden /> None active or planned
+      </Quiet>
+    );
+  }
+  return (
+    <ul className="grid gap-0.5">
+      {list.map((m) => (
+        <MaintenanceRow key={`${m.teamId ?? 'global'}:${m.id}`} m={m} canCancel={canCancel} />
+      ))}
+    </ul>
+  );
+}
+
 export function MaintenanceWidget() {
   const query = useMaintenances();
   const canWrite = useWriteActions().has('maintenance');
   const [creating, setCreating] = useState(false);
-  const list = query.data?.maintenances ?? [];
   return (
     <OpsPanel
       title="Maintenance"
@@ -165,23 +171,7 @@ export function MaintenanceWidget() {
         )
       }
     >
-      {query.isPending ? (
-        <Quiet>
-          <Loader2 size={12} aria-hidden className="spin" /> Loading…
-        </Quiet>
-      ) : query.error && !query.data ? (
-        <Failed error={query.error} />
-      ) : list.length === 0 ? (
-        <Quiet tone="ok">
-          <CircleCheck size={12} aria-hidden /> None active or planned
-        </Quiet>
-      ) : (
-        <ul className="grid gap-0.5">
-          {list.map((m) => (
-            <MaintenanceRow key={`${m.teamId ?? 'global'}:${m.id}`} m={m} canCancel={canWrite} />
-          ))}
-        </ul>
-      )}
+      <MaintenanceList query={query} canCancel={canWrite} />
       {creating && <NewMaintenanceDialog onClose={() => setCreating(false)} />}
     </OpsPanel>
   );
@@ -193,10 +183,14 @@ export function MaintenanceIndicator() {
   const now = useNow();
   const active = (data?.maintenances ?? []).filter((m) => m.status === 'active');
   if (active.length === 0) return null;
-  const tip = active.map((m) => `${m.description || 'Maintenance'} · ${m.teamName ?? 'All teams'} · ${m.endDate ? `until ${when(m.endDate, now)}` : 'active'}`).join('\n');
+  const tip = active
+    .map((m) => {
+      const until = m.endDate ? `until ${when(m.endDate, now)}` : 'active';
+      return `${m.description || 'Maintenance'} · ${m.teamName ?? 'All teams'} · ${until}`;
+    })
+    .join('\n');
   return (
-    <span
-      role="status"
+    <output
       className="flex h-7 flex-none items-center gap-1.5 rounded-md border border-warn/50 bg-warn-soft px-2 text-xs font-semibold text-warn"
       data-tip={tip}
       data-tip-always=""
@@ -204,19 +198,20 @@ export function MaintenanceIndicator() {
       <Wrench size={13} aria-hidden />
       <span className="max-md:hidden">Maintenance</span>
       {active.length > 1 && <span className="tabular-nums">{active.length}</span>}
-    </span>
+    </output>
   );
 }
 
 /** Detail-panel chip when the alert's integration is disabled by an active maintenance. */
-export function MaintenanceBadge({ integrationName }: { integrationName: string | null }) {
+export function MaintenanceBadge({ integrationName }: Readonly<{ integrationName: string | null }>) {
   const m = useMaintenanceFor(integrationName);
   const now = useNow();
   if (!m) return null;
+  const until = m.endDate ? ` until ${when(m.endDate, now)}` : '';
   return (
     <span
       className="inline-flex h-[18px] flex-none items-center gap-1 rounded border border-warn/50 bg-warn-soft px-1.5 text-[11px] font-semibold text-warn"
-      data-tip={`${integrationName} is disabled by "${m.description || 'maintenance'}"${m.endDate ? ` until ${when(m.endDate, now)}` : ''}`}
+      data-tip={`${integrationName} is disabled by "${m.description || 'maintenance'}"${until}`}
       data-tip-always=""
     >
       <Wrench size={11} aria-hidden />
@@ -243,7 +238,133 @@ function localInput(ms: number): string {
 const TYPE_LABEL: Record<MaintenanceTarget['type'], string> = { integration: 'Integrations', policy: 'Policies', sync: 'Syncs' };
 const field = 'h-7 w-full rounded-md border border-line-strong bg-panel px-2 text-xs text-fg placeholder:text-subtle focus:border-accent focus:outline-none';
 
-function NewMaintenanceDialog({ onClose }: { onClose: () => void }) {
+function DurationFields({
+  minutes,
+  onPreset,
+  onCustom,
+  startLater,
+  onStartLater,
+  start,
+  onStart,
+  end,
+  onEnd,
+  timeError,
+}: Readonly<{
+  minutes: number | 'custom';
+  onPreset: (minutes: number) => void;
+  onCustom: () => void;
+  startLater: boolean;
+  onStartLater: (startLater: boolean) => void;
+  start: string;
+  onStart: (start: string) => void;
+  end: string;
+  onEnd: (end: string) => void;
+  timeError: string | null;
+}>) {
+  return (
+    <div className="grid gap-1">
+      <span className="text-muted">Duration</span>
+      <div className="flex flex-wrap gap-1">
+        {DURATIONS.map((d) => (
+          <button
+            key={d.minutes}
+            type="button"
+            aria-pressed={minutes === d.minutes}
+            onClick={() => onPreset(d.minutes)}
+            className={cn('h-7 rounded-md border px-2.5 font-medium', minutes === d.minutes ? 'border-accent bg-accent-soft text-accent' : 'border-line-strong hover:bg-hover')}
+          >
+            {d.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          aria-pressed={minutes === 'custom'}
+          onClick={onCustom}
+          className={cn('h-7 rounded-md border px-2.5 font-medium', minutes === 'custom' ? 'border-accent bg-accent-soft text-accent' : 'border-line-strong hover:bg-hover')}
+        >
+          Until…
+        </button>
+      </div>
+      <label className="mt-1 flex items-center gap-2">
+        <input type="checkbox" checked={startLater} onChange={(e) => onStartLater(e.target.checked)} />Start later
+      </label>
+      {(startLater || minutes === 'custom') && (
+        <div className="grid grid-cols-2 gap-1.5">
+          {startLater && (
+            <input type="datetime-local" aria-label="Start" value={start} min={localInput(Date.now())} onChange={(e) => onStart(e.target.value)} className={field} />
+          )}
+          {minutes === 'custom' && (
+            <input type="datetime-local" aria-label="End" value={end} min={localInput(Date.now())} onChange={(e) => onEnd(e.target.value)} className={cn(field, !startLater && 'col-span-2')} />
+          )}
+        </div>
+      )}
+      {timeError && <span className="text-warn">{timeError}</span>}
+    </div>
+  );
+}
+
+/** What a new window can switch off, by type, with the state for policies. */
+function TargetList({
+  pending,
+  error,
+  targets,
+  forTeam,
+  chosen,
+  onToggle,
+  onPolicyState,
+}: Readonly<{
+  pending: boolean;
+  error: Error | null;
+  targets: MaintenanceTarget[];
+  forTeam: boolean;
+  chosen: ReadonlyMap<string, MaintenanceRule>;
+  onToggle: (target: MaintenanceTarget) => void;
+  onPolicyState: (target: MaintenanceTarget, state: MaintenanceRule['state']) => void;
+}>) {
+  if (pending) return <Loading />;
+  if (error) return <Failed error={error} />;
+  if (targets.length === 0) return <Quiet tone="warn">Nothing to switch off{forTeam ? ' for this team' : ''}</Quiet>;
+  return (
+    <div className="max-h-48 overflow-y-auto rounded-md border border-line">
+      {(['integration', 'policy', 'sync'] as const).map((type) => {
+        const items = targets.filter((t) => t.type === type);
+        if (items.length === 0) return null;
+        return (
+          <fieldset key={type} className="border-b border-line px-2 py-1 last:border-b-0">
+            <legend className="sr-only">{TYPE_LABEL[type]}</legend>
+            <p className="py-0.5 text-[10px] font-semibold uppercase tracking-wide text-subtle" aria-hidden>
+              {TYPE_LABEL[type]}
+            </p>
+            {items.map((t) => {
+              const rule = chosen.get(`${t.type}:${t.id}`);
+              return (
+                <div key={t.id} className="flex items-center gap-2 py-0.5">
+                  <label className="flex min-w-0 flex-1 items-center gap-2">
+                    <input type="checkbox" checked={Boolean(rule)} onChange={() => onToggle(t)} />
+                    <span className={cn('truncate', t.enabled === false && 'text-subtle')}>{t.name}</span>
+                  </label>
+                  {rule && t.type === 'policy' && (
+                    <select
+                      aria-label={`State of ${t.name}`}
+                      value={rule.state}
+                      onChange={(e) => onPolicyState(t, e.target.value as MaintenanceRule['state'])}
+                      className="h-6 rounded border border-line-strong bg-panel px-1 text-[11px]"
+                    >
+                      <option value="disabled">Disable</option>
+                      <option value="enabled">Enable</option>
+                    </select>
+                  )}
+                </div>
+              );
+            })}
+          </fieldset>
+        );
+      })}
+    </div>
+  );
+}
+
+function NewMaintenanceDialog({ onClose }: Readonly<{ onClose: () => void }>) {
   const targetsQuery = useMaintenanceTargets(true);
   const create = useCreateMaintenance();
   const [description, setDescription] = useState('');
@@ -270,15 +391,7 @@ function NewMaintenanceDialog({ onClose }: { onClose: () => void }) {
   const startMs = startLater ? Date.parse(start) : Date.now();
   const endMs = minutes === 'custom' ? Date.parse(end) : startMs + minutes * 60_000;
   const rules = [...chosen.values()].filter((r) => targets.some((t) => t.id === r.entity.id && t.type === r.entity.type));
-  const timeError = !Number.isFinite(startMs) || !Number.isFinite(endMs)
-    ? 'Choose a time'
-    : endMs <= startMs + 60_000
-      ? 'End after start'
-      : endMs - startMs > MAINTENANCE_MAX_DAYS * 86_400_000
-        ? `At most ${MAINTENANCE_MAX_DAYS} days`
-        : startLater && startMs < Date.now()
-          ? 'Start in the future'
-          : null;
+  const timeError = maintenanceTimeError(startMs, endMs, startLater, Date.now());
   const ready = description.trim() !== '' && rules.length > 0 && !timeError;
 
   const toggle = (t: MaintenanceTarget) => {
@@ -295,6 +408,18 @@ function NewMaintenanceDialog({ onClose }: { onClose: () => void }) {
     setChosen((current) => new Map(current).set(`${t.type}:${t.id}`, { entity: { id: t.id, type: t.type }, state }));
   };
   const allIntegrations = integrations.length > 0 && integrations.every((t) => chosen.has(`integration:${t.id}`));
+  const toggleAllIntegrations = () => {
+    setConfirming(false);
+    setChosen((current) => {
+      const next = new Map(current);
+      for (const t of integrations) {
+        const key = `integration:${t.id}`;
+        if (allIntegrations) next.delete(key);
+        else next.set(key, { entity: { id: t.id, type: 'integration' }, state: 'disabled' });
+      }
+      return next;
+    });
+  };
 
   const submit = () => {
     if (!ready) return;
@@ -314,7 +439,7 @@ function NewMaintenanceDialog({ onClose }: { onClose: () => void }) {
     );
   };
 
-  const summary = `${rules.length} rule${rules.length === 1 ? '' : 's'} · ${teamId ? (targetsQuery.data?.teams.find((t) => t.id === teamId)?.name ?? 'team') : 'all teams'} · ${startLater ? dayShort.format(startMs) : 'now'} → ${Number.isFinite(endMs) ? dayShort.format(endMs) : '–'}`;
+  const summary = maintenanceSummary(rules.length, scopeLabel(teamId, targetsQuery.data?.teams), startLater ? startMs : null, endMs);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -375,119 +500,39 @@ function NewMaintenanceDialog({ onClose }: { onClose: () => void }) {
               ))}
             </select>
           </label>
-          <div className="grid gap-1">
-            <span className="text-muted">Duration</span>
-            <div className="flex flex-wrap gap-1">
-              {DURATIONS.map((d) => (
-                <button
-                  key={d.minutes}
-                  type="button"
-                  aria-pressed={minutes === d.minutes}
-                  onClick={() => {
-                    setMinutes(d.minutes);
-                    setConfirming(false);
-                  }}
-                  className={cn('h-7 rounded-md border px-2.5 font-medium', minutes === d.minutes ? 'border-accent bg-accent-soft text-accent' : 'border-line-strong hover:bg-hover')}
-                >
-                  {d.label}
-                </button>
-              ))}
-              <button
-                type="button"
-                aria-pressed={minutes === 'custom'}
-                onClick={() => setMinutes('custom')}
-                className={cn('h-7 rounded-md border px-2.5 font-medium', minutes === 'custom' ? 'border-accent bg-accent-soft text-accent' : 'border-line-strong hover:bg-hover')}
-              >
-                Until…
-              </button>
-            </div>
-            <label className="mt-1 flex items-center gap-2">
-              <input type="checkbox" checked={startLater} onChange={(e) => setStartLater(e.target.checked)} />
-              Start later
-            </label>
-            {(startLater || minutes === 'custom') && (
-              <div className="grid grid-cols-2 gap-1.5">
-                {startLater && (
-                  <input type="datetime-local" aria-label="Start" value={start} min={localInput(Date.now())} onChange={(e) => setStart(e.target.value)} className={field} />
-                )}
-                {minutes === 'custom' && (
-                  <input type="datetime-local" aria-label="End" value={end} min={localInput(Date.now())} onChange={(e) => setEnd(e.target.value)} className={cn(field, !startLater && 'col-span-2')} />
-                )}
-              </div>
-            )}
-            {timeError && <span className="text-warn">{timeError}</span>}
-          </div>
+          <DurationFields
+            minutes={minutes}
+            onPreset={(preset) => {
+              setMinutes(preset);
+              setConfirming(false);
+            }}
+            onCustom={() => setMinutes('custom')}
+            startLater={startLater}
+            onStartLater={setStartLater}
+            start={start}
+            onStart={setStart}
+            end={end}
+            onEnd={setEnd}
+            timeError={timeError}
+          />
           <div className="grid gap-1">
             <span className="flex items-center justify-between text-muted">
               Switch off
               {integrations.length > 1 && (
                 <label className="flex items-center gap-1.5">
-                  <input
-                    type="checkbox"
-                    checked={allIntegrations}
-                    onChange={() => {
-                      setConfirming(false);
-                      setChosen((current) => {
-                        const next = new Map(current);
-                        for (const t of integrations) {
-                          const key = `integration:${t.id}`;
-                          if (allIntegrations) next.delete(key);
-                          else next.set(key, { entity: { id: t.id, type: 'integration' }, state: 'disabled' });
-                        }
-                        return next;
-                      });
-                    }}
-                  />
-                  All integrations
+                  <input type="checkbox" checked={allIntegrations} onChange={toggleAllIntegrations} />All integrations
                 </label>
               )}
             </span>
-            {targetsQuery.isPending ? (
-              <Quiet>
-                <Loader2 size={12} aria-hidden className="spin" /> Loading…
-              </Quiet>
-            ) : targetsQuery.error ? (
-              <Failed error={targetsQuery.error} />
-            ) : targets.length === 0 ? (
-              <Quiet tone="warn">Nothing to switch off{teamId ? ' for this team' : ''}</Quiet>
-            ) : (
-              <div className="max-h-48 overflow-y-auto rounded-md border border-line">
-                {(['integration', 'policy', 'sync'] as const).map((type) => {
-                  const items = targets.filter((t) => t.type === type);
-                  if (items.length === 0) return null;
-                  return (
-                    <fieldset key={type} className="border-b border-line px-2 py-1 last:border-b-0">
-                      <legend className="sr-only">{TYPE_LABEL[type]}</legend>
-                      <p className="py-0.5 text-[10px] font-semibold uppercase tracking-wide text-subtle" aria-hidden>
-                        {TYPE_LABEL[type]}
-                      </p>
-                      {items.map((t) => {
-                        const rule = chosen.get(`${t.type}:${t.id}`);
-                        return (
-                          <div key={t.id} className="flex items-center gap-2 py-0.5">
-                            <label className="flex min-w-0 flex-1 items-center gap-2">
-                              <input type="checkbox" checked={Boolean(rule)} onChange={() => toggle(t)} />
-                              <span className={cn('truncate', t.enabled === false && 'text-subtle')}>{t.name}</span>
-                            </label>
-                            {rule && t.type === 'policy' && (
-                              <select
-                                aria-label={`State of ${t.name}`}
-                                value={rule.state}
-                                onChange={(e) => setPolicyState(t, e.target.value as MaintenanceRule['state'])}
-                                className="h-6 rounded border border-line-strong bg-panel px-1 text-[11px]"
-                              >
-                                <option value="disabled">Disable</option>
-                                <option value="enabled">Enable</option>
-                              </select>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </fieldset>
-                  );
-                })}
-              </div>
-            )}
+            <TargetList
+              pending={targetsQuery.isPending}
+              error={targetsQuery.error}
+              targets={targets}
+              forTeam={Boolean(teamId)}
+              chosen={chosen}
+              onToggle={toggle}
+              onPolicyState={setPolicyState}
+            />
           </div>
           {create.error && (
             <p role="alert" className="flex items-start gap-1.5 text-crit">
@@ -506,7 +551,7 @@ function NewMaintenanceDialog({ onClose }: { onClose: () => void }) {
               className={cn('inline-flex h-7 items-center gap-1.5 rounded-md px-3 font-semibold disabled:opacity-50', confirming ? 'bg-warn text-panel' : 'bg-accent text-on-accent')}
             >
               {create.isPending && <Loader2 size={12} aria-hidden className="spin" />}
-              {confirming ? 'Confirm' : startLater ? 'Plan maintenance' : 'Start maintenance'}
+              {submitLabel(confirming, startLater)}
             </button>
           </div>
         </form>
@@ -517,6 +562,35 @@ function NewMaintenanceDialog({ onClose }: { onClose: () => void }) {
 
 // ---- Heartbeats ----------------------------------------------------------------
 
+function HeartbeatList({ query, beats, failing }: Readonly<{ query: ReturnType<typeof useHeartbeats>; beats: Heartbeat[]; failing: Heartbeat[] }>) {
+  if (query.isPending) return <Loading />;
+  if (query.error && !query.data) return <Failed error={query.error} />;
+  if (beats.length === 0) return <Quiet>No heartbeats</Quiet>;
+  if (failing.length === 0) {
+    return (
+      <Quiet tone="ok">
+        <CircleCheck size={12} aria-hidden /> All reporting
+      </Quiet>
+    );
+  }
+  return (
+    <ul className="grid gap-0.5">
+      {failing.map((h) => (
+        <li key={`${h.teamId}:${h.name}`} className="flex items-center gap-2 rounded px-1.5 py-0.5 text-xs" data-tip={h.description ?? h.name} data-tip-always="">
+          <TriangleAlert size={12} aria-hidden className="flex-none text-crit" />
+          <span className="min-w-0 flex-1 truncate font-medium">{h.name}</span>
+          <span className="flex-none truncate text-[11px] text-subtle">{h.teamName ?? ''}</span>
+          {h.interval && h.intervalUnit && (
+            <span className="flex-none text-[11px] tabular-nums text-muted">
+              every {h.interval} {h.intervalUnit.toLowerCase().replace(/s$/, h.interval === 1 ? '' : 's')}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function HeartbeatsWidget() {
   const query = useHeartbeats();
   const beats = query.data?.heartbeats ?? [];
@@ -525,34 +599,7 @@ export function HeartbeatsWidget() {
   const off = beats.filter((h) => !h.enabled || h.status === 'Off').length;
   return (
     <OpsPanel title="Heartbeats" icon={<HeartPulse size={12} aria-hidden />} action={beats.length > 0 && <span className="text-[11px] tabular-nums text-subtle">{ok} ok{off ? ` · ${off} off` : ''}</span>}>
-      {query.isPending ? (
-        <Quiet>
-          <Loader2 size={12} aria-hidden className="spin" /> Loading…
-        </Quiet>
-      ) : query.error && !query.data ? (
-        <Failed error={query.error} />
-      ) : beats.length === 0 ? (
-        <Quiet>No heartbeats</Quiet>
-      ) : failing.length === 0 ? (
-        <Quiet tone="ok">
-          <CircleCheck size={12} aria-hidden /> All reporting
-        </Quiet>
-      ) : (
-        <ul className="grid gap-0.5">
-          {failing.map((h) => (
-            <li key={`${h.teamId}:${h.name}`} className="flex items-center gap-2 rounded px-1.5 py-0.5 text-xs" data-tip={h.description ?? h.name} data-tip-always="">
-              <TriangleAlert size={12} aria-hidden className="flex-none text-crit" />
-              <span className="min-w-0 flex-1 truncate font-medium">{h.name}</span>
-              <span className="flex-none truncate text-[11px] text-subtle">{h.teamName ?? ''}</span>
-              {h.interval && h.intervalUnit && (
-                <span className="flex-none text-[11px] tabular-nums text-muted">
-                  every {h.interval} {h.intervalUnit.toLowerCase().replace(/s$/, h.interval === 1 ? '' : 's')}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      <HeartbeatList query={query} beats={beats} failing={failing} />
       {query.data && query.data.failedTeams > 0 && <Quiet tone="warn">{query.data.failedTeams} team(s) not readable</Quiet>}
     </OpsPanel>
   );
@@ -560,7 +607,7 @@ export function HeartbeatsWidget() {
 
 // ---- On call ---------------------------------------------------------------------
 
-function Participant({ p }: { p: OnCallParticipant }) {
+function Participant({ p }: Readonly<{ p: OnCallParticipant }>) {
   const group = p.type !== 'user';
   const label = p.name ?? `${group ? p.type : 'User'} ${p.id.slice(0, 8)}`;
   return (
@@ -575,40 +622,46 @@ function Participant({ p }: { p: OnCallParticipant }) {
   );
 }
 
+/** Who is on call now for one schedule. */
+function OnCallPeople({ schedule }: Readonly<{ schedule: OnCallSchedule }>) {
+  if (schedule.error) return <span className="text-[11px] text-warn">Not readable</span>;
+  if (schedule.onCall.length === 0) return <span className="text-[11px] text-subtle">Nobody</span>;
+  return (
+    <>
+      {schedule.onCall.map((p) => (
+        <Participant key={`${p.type}:${p.id}`} p={p} />
+      ))}
+    </>
+  );
+}
+
+function ScheduleList({ query }: Readonly<{ query: ReturnType<typeof useOnCall> }>) {
+  if (query.isPending) return <Loading />;
+  if (query.error && !query.data) return <Failed error={query.error} />;
+  const schedules = query.data?.schedules ?? [];
+  if (schedules.length === 0) return <Quiet>No schedules</Quiet>;
+  return (
+    <ul className="grid gap-1">
+      {schedules.map((s) => (
+        <li key={s.id} className="rounded px-1.5 py-0.5">
+          <div className="flex items-baseline gap-2 text-xs">
+            <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
+            {s.teamName && <span className="flex-none truncate text-[11px] text-subtle">{s.teamName}</span>}
+          </div>
+          <div className="mt-0.5 flex flex-wrap gap-1">
+            <OnCallPeople schedule={s} />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function OnCallWidget() {
   const query = useOnCall();
-  const schedules = query.data?.schedules ?? [];
   return (
     <OpsPanel title="On call now" icon={<UserRound size={12} aria-hidden />}>
-      {query.isPending ? (
-        <Quiet>
-          <Loader2 size={12} aria-hidden className="spin" /> Loading…
-        </Quiet>
-      ) : query.error && !query.data ? (
-        <Failed error={query.error} />
-      ) : schedules.length === 0 ? (
-        <Quiet>No schedules</Quiet>
-      ) : (
-        <ul className="grid gap-1">
-          {schedules.map((s) => (
-            <li key={s.id} className="rounded px-1.5 py-0.5">
-              <div className="flex items-baseline gap-2 text-xs">
-                <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
-                {s.teamName && <span className="flex-none truncate text-[11px] text-subtle">{s.teamName}</span>}
-              </div>
-              <div className="mt-0.5 flex flex-wrap gap-1">
-                {s.error ? (
-                  <span className="text-[11px] text-warn">Not readable</span>
-                ) : s.onCall.length === 0 ? (
-                  <span className="text-[11px] text-subtle">Nobody</span>
-                ) : (
-                  s.onCall.map((p) => <Participant key={`${p.type}:${p.id}`} p={p} />)
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ScheduleList query={query} />
     </OpsPanel>
   );
 }

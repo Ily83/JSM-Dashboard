@@ -52,7 +52,7 @@ export const Dashboard = memo(function Dashboard({ stats, density, editing, onDo
   };
 
   /** Corner drag: the size snaps to whole grid columns and row units. */
-  const onResizeMove = (event: PointerEvent<HTMLDivElement>, id: WidgetId) => {
+  const onResizeMove = (event: PointerEvent<HTMLHRElement>, id: WidgetId) => {
     if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
     const grid = gridRef.current;
     const cell = event.currentTarget.parentElement;
@@ -73,7 +73,7 @@ export const Dashboard = memo(function Dashboard({ stats, density, editing, onDo
           const def = WIDGET_BY_ID[placement.id];
           const Widget = WIDGET_COMPONENTS[placement.id];
           const height = placement.h * rowUnit + (placement.h - 1) * GAP;
-          const dropSide = drag && drag.over === placement.id && drag.id !== placement.id ? drag.side : undefined;
+          const dropSide = drag?.over === placement.id && drag.id !== placement.id ? drag.side : undefined;
           return (
             <div
               key={placement.id}
@@ -87,7 +87,7 @@ export const Dashboard = memo(function Dashboard({ stats, density, editing, onDo
             >
               {/* While editing, the content does not react to clicks. */}
               <div className={cn('h-full', editing && 'pointer-events-none select-none')} inert={editing}>
-                <Widget stats={stats} w={placement.w} h={placement.h} height={height} actions={actions} />
+                <Widget stats={stats} w={placement.w} height={height} actions={actions} />
               </div>
 
               {editing && (
@@ -118,10 +118,9 @@ export const Dashboard = memo(function Dashboard({ stats, density, editing, onDo
                       <EyeOff size={14} aria-hidden />
                     </button>
                   </div>
-                  <div
-                    role="separator"
+                  <hr
                     aria-label={`Resize ${def.title}`}
-                    className="absolute bottom-0 right-0 size-4 cursor-nwse-resize touch-none rounded-br-md border-b-2 border-r-2 border-accent"
+                    className="absolute bottom-0 right-0 size-4 cursor-nwse-resize touch-none rounded-br-md border-t-0 border-b-2 border-r-2 border-accent"
                     onPointerDown={(event) => {
                       event.preventDefault();
                       event.currentTarget.setPointerCapture(event.pointerId);

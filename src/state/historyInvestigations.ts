@@ -47,8 +47,8 @@ export function sanitizeInvestigation(stored: unknown): HistoryInvestigation | n
   };
 }
 
-export function sanitizeHistoryInvestigations(stored: unknown, fallback: HistoryInvestigationsData = { saved: [] }): HistoryInvestigationsData {
-  if (!isRecord(stored) || !Array.isArray(stored.saved)) return fallback;
+export function sanitizeHistoryInvestigations(stored: unknown, fallback?: HistoryInvestigationsData): HistoryInvestigationsData {
+  if (!isRecord(stored) || !Array.isArray(stored.saved)) return fallback ?? { saved: [] };
   const ids = new Set<string>();
   const saved: HistoryInvestigation[] = [];
   for (const item of stored.saved) {

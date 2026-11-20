@@ -35,25 +35,26 @@ export function routeHash(route: Route): string {
   const params = new URLSearchParams(route.view);
   if (route.alertId) params.set('alert', route.alertId);
   const query = params.toString();
-  return `#/${route.section}${query ? `?${query}` : ''}`;
+  const search = query ? `?${query}` : '';
+  return `#/${route.section}${search}`;
 }
 
 // Guarded so modules that import the router can also be loaded by unit tests.
-const initialHash = typeof window === 'undefined' ? '' : window.location.hash;
+const initialHash = globalThis.window === undefined ? '' : globalThis.location.hash;
 let cached: Route = parseHash(initialHash);
 let cachedHash = initialHash;
 
 function snapshot(): Route {
-  if (window.location.hash !== cachedHash) {
-    cachedHash = window.location.hash;
+  if (globalThis.location.hash !== cachedHash) {
+    cachedHash = globalThis.location.hash;
     cached = parseHash(cachedHash);
   }
   return cached;
 }
 
 function subscribe(listener: () => void): () => void {
-  window.addEventListener('hashchange', listener);
-  return () => window.removeEventListener('hashchange', listener);
+  globalThis.addEventListener('hashchange', listener);
+  return () => globalThis.removeEventListener('hashchange', listener);
 }
 
 export function useRoute(): Route {
@@ -63,11 +64,11 @@ export function useRoute(): Route {
 export function navigate(next: Partial<Route>, options: { replace?: boolean } = {}): void {
   const route = { ...snapshot(), ...next };
   const hash = routeHash(route);
-  if (hash === window.location.hash) return;
+  if (hash === globalThis.location.hash) return;
   if (options.replace) {
-    window.history.replaceState(null, '', hash);
-    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    globalThis.history.replaceState(null, '', hash);
+    globalThis.dispatchEvent(new HashChangeEvent('hashchange'));
   } else {
-    window.location.hash = hash;
+    globalThis.location.hash = hash;
   }
 }

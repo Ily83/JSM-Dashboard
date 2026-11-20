@@ -46,7 +46,7 @@ export function percentile(sorted: readonly number[], p: number): number | null 
   const rank = (sorted.length - 1) * p;
   const low = Math.floor(rank);
   const high = Math.ceil(rank);
-  return sorted[low]! + (sorted[high]! - sorted[low]!) * (rank - low);
+  return sorted[low] + (sorted[high] - sorted[low]) * (rank - low);
 }
 
 function durations(alerts: readonly Alert[], end: (a: Alert) => number | null): DurationStats {
@@ -84,7 +84,10 @@ export function responseBreakdown(alerts: readonly Alert[], dimension: ResponseD
     for (const alert of alerts) {
       for (const name of new Set(alert.customers)) {
         let list = byCustomer.get(name);
-        if (!list) byCustomer.set(name, (list = []));
+        if (!list) {
+          list = [];
+          byCustomer.set(name, list);
+        }
         list.push(alert);
       }
     }

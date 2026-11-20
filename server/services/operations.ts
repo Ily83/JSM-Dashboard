@@ -84,7 +84,7 @@ export function parseAction(body: unknown, now = Date.now()): AlertAction {
     const fields = [...new Set(parsed.error.issues.map((i) => i.path.join('.') || 'action'))].join(', ');
     throw new ActionRequestError(400, `Invalid action request (${fields}).`);
   }
-  const action = parsed.data as AlertAction;
+  const action = parsed.data;
   if (action.action === 'snooze') {
     const end = Date.parse(action.endTime);
     if (end < now + 60_000) throw new ActionRequestError(400, 'The snooze end must be at least one minute from now.');

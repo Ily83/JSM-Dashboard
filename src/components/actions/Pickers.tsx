@@ -1,8 +1,7 @@
 import { useDeferredValue, useMemo, useState, type ReactNode } from 'react';
 import { Loader2, Search } from 'lucide-react';
 import type { DirectoryEntry, ResponderTarget } from '../../../shared/actions';
-import type { Alert } from '../../../shared/types';
-import { PRIORITIES, type Priority } from '../../../shared/types';
+import { PRIORITIES, type Alert, type Priority } from '../../../shared/types';
 import { useEscalations, useMe, useSchedules, useTeams, useUserSearch } from '../../api/hooks';
 import { cn } from '../../lib/cn';
 import { PriorityBadge } from '../ui/badges';
@@ -16,7 +15,7 @@ import { PriorityBadge } from '../ui/badges';
 const input = 'h-7 w-full rounded-md border border-line-strong bg-panel px-2 text-xs text-fg placeholder:text-subtle focus:border-accent focus:outline-none';
 const option = 'flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-hover disabled:opacity-50';
 
-function Status({ children }: { children: ReactNode }) {
+function Status({ children }: Readonly<{ children: ReactNode }>) {
   return <p className="px-2 py-1.5 text-xs text-subtle">{children}</p>;
 }
 
@@ -26,13 +25,13 @@ function OptionList({
   error,
   empty,
   onPick,
-}: {
+}: Readonly<{
   items: DirectoryEntry[] | undefined;
   loading: boolean;
   error: Error | null;
   empty: string;
   onPick: (item: DirectoryEntry) => void;
-}) {
+}>) {
   if (loading) {
     return (
       <Status>
@@ -61,7 +60,7 @@ function filterByName(items: DirectoryEntry[] | undefined, text: string): Direct
   return needle ? items?.filter((i) => i.name.toLowerCase().includes(needle)) : items;
 }
 
-function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
+function SearchBox({ value, onChange, placeholder }: Readonly<{ value: string; onChange: (value: string) => void; placeholder: string }>) {
   return (
     <div className="relative">
       <Search size={12} aria-hidden className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-subtle" />
@@ -72,7 +71,7 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
 
 // ---- People -------------------------------------------------------------------
 
-function UserSearch({ onPick, showMe }: { onPick: (user: { accountId: string; displayName: string }) => void; showMe: boolean }) {
+function UserSearch({ onPick, showMe }: Readonly<{ onPick: (user: { accountId: string; displayName: string }) => void; showMe: boolean }>) {
   const [text, setText] = useState('');
   const query = useDeferredValue(text);
   const users = useUserSearch(query);
@@ -98,7 +97,7 @@ function UserSearch({ onPick, showMe }: { onPick: (user: { accountId: string; di
   );
 }
 
-export function AssignPicker({ onPick }: { onPick: (accountId: string) => void }) {
+export function AssignPicker({ onPick }: Readonly<{ onPick: (accountId: string) => void }>) {
   return (
     <div className="w-64 p-2">
       <UserSearch showMe onPick={(user) => onPick(user.accountId)} />
@@ -119,7 +118,7 @@ function teamIdsOf(alert: Alert): string[] {
   return alert.responders.filter((r) => r.type === 'team').map((r) => r.id);
 }
 
-function TeamList({ onPick }: { onPick: (team: DirectoryEntry) => void }) {
+function TeamList({ onPick }: Readonly<{ onPick: (team: DirectoryEntry) => void }>) {
   const [text, setText] = useState('');
   const teams = useTeams();
   return (
@@ -130,7 +129,7 @@ function TeamList({ onPick }: { onPick: (team: DirectoryEntry) => void }) {
   );
 }
 
-function ScheduleList({ onPick }: { onPick: (schedule: DirectoryEntry) => void }) {
+function ScheduleList({ onPick }: Readonly<{ onPick: (schedule: DirectoryEntry) => void }>) {
   const [text, setText] = useState('');
   const schedules = useSchedules();
   return (
@@ -142,7 +141,7 @@ function ScheduleList({ onPick }: { onPick: (schedule: DirectoryEntry) => void }
 }
 
 /** Escalations of the alert's teams and the ones already on the alert, or of another chosen team. */
-function EscalationList({ alert, onPick }: { alert: Alert; onPick: (escalation: DirectoryEntry) => void }) {
+function EscalationList({ alert, onPick }: Readonly<{ alert: Alert; onPick: (escalation: DirectoryEntry) => void }>) {
   const alertTeams = useMemo(() => teamIdsOf(alert), [alert]);
   const onAlert = useMemo(
     () => alert.responders.filter((r) => r.type === 'escalation').map((r) => ({ id: r.id, name: r.name ?? `Escalation ${r.id.slice(0, 8)}` })),
@@ -184,7 +183,7 @@ function EscalationList({ alert, onPick }: { alert: Alert; onPick: (escalation: 
   );
 }
 
-export function ResponderPicker({ alert, onPick }: { alert: Alert; onPick: (responder: ResponderTarget) => void }) {
+export function ResponderPicker({ alert, onPick }: Readonly<{ alert: Alert; onPick: (responder: ResponderTarget) => void }>) {
   const [tab, setTab] = useState<ResponderTarget['type']>('team');
   return (
     <div className="w-72 p-2">
@@ -210,7 +209,7 @@ export function ResponderPicker({ alert, onPick }: { alert: Alert; onPick: (resp
   );
 }
 
-export function EscalatePicker({ alert, onPick }: { alert: Alert; onPick: (escalationId: string) => void }) {
+export function EscalatePicker({ alert, onPick }: Readonly<{ alert: Alert; onPick: (escalationId: string) => void }>) {
   return (
     <div className="w-72 p-2">
       <EscalationList alert={alert} onPick={(e) => onPick(e.id)} />
@@ -235,7 +234,7 @@ function localInputValue(ms: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function SnoozePicker({ onPick }: { onPick: (endTime: string) => void }) {
+export function SnoozePicker({ onPick }: Readonly<{ onPick: (endTime: string) => void }>) {
   const [custom, setCustom] = useState(() => localInputValue(Date.now() + 2 * 3_600_000));
   const customMs = Date.parse(custom);
   return (
@@ -270,7 +269,7 @@ export function SnoozePicker({ onPick }: { onPick: (endTime: string) => void }) 
 
 // ---- Priority -----------------------------------------------------------------
 
-export function PriorityPicker({ current, onPick }: { current: Priority; onPick: (priority: Priority) => void }) {
+export function PriorityPicker({ current, onPick }: Readonly<{ current: Priority; onPick: (priority: Priority) => void }>) {
   return (
     <div className="flex gap-1 p-2">
       {PRIORITIES.map((p) => (

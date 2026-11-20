@@ -1,9 +1,28 @@
+import type { ComponentProps } from 'react';
 import { ArrowDown, ArrowUp, Columns3, RotateCcw } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { COLUMN_INFO } from '../../config/columns';
 import { useStore } from '../../lib/store';
 import { DEFAULT_TABLE_LAYOUT, moveColumn, setColumnVisible, tableLayoutStore } from '../../state/tableLayout';
 import { Popover } from '../ui/Popover';
+
+/** The menu button, with the number of hidden columns. */
+function columnsTrigger(hiddenCount: number): ComponentProps<typeof Popover>['trigger'] {
+  return (props, open) => (
+    <button
+      type="button"
+      {...props}
+      className={cn(
+        'flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium',
+        open ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg',
+      )}
+    >
+      <Columns3 size={14} aria-hidden />
+      Columns
+      {hiddenCount > 0 && <span className="text-subtle">({hiddenCount} hidden)</span>}
+    </button>
+  );
+}
 
 /** Show, hide and reorder columns. Keyboard alternative to dragging headers. */
 export function ColumnsMenu() {
@@ -15,20 +34,7 @@ export function ColumnsMenu() {
       label="Columns"
       align="end"
       className="w-72"
-      trigger={(props, open) => (
-        <button
-          type="button"
-          {...props}
-          className={cn(
-            'flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium',
-            open ? 'border-accent bg-accent-soft text-fg' : 'border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg',
-          )}
-        >
-          <Columns3 size={14} aria-hidden />
-          Columns
-          {hiddenCount > 0 && <span className="text-subtle">({hiddenCount} hidden)</span>}
-        </button>
-      )}
+      trigger={columnsTrigger(hiddenCount)}
     >
       {() => (
         <div className="p-1.5">

@@ -121,25 +121,43 @@ async function refusalText(response: Response): Promise<string | null> {
   }
 }
 
+/** Kind of a write that Jira refused with a reason. */
+function refusalKind(status: number): JiraErrorKind {
+  if (status === 403) return 'forbidden';
+  if (status === 404) return 'not_found';
+  if (status >= 500) return 'server';
+  return 'validation';
+}
+
+/** Messages for a read or write the user asked for; null where the sync message applies. */
+function userRequestError(status: number, purpose: 'read' | 'write'): JiraApiError | null {
+  const verb = purpose === 'write' ? 'this action' : 'reading this';
+  switch (status) {
+    case 403:
+      return new JiraApiError('forbidden', status, `Jira refused ${verb} for the configured account (403). Check its Operations permissions.`);
+    case 404:
+      return new JiraApiError('not_found', status, 'Jira did not find it (404). The alert may have been deleted.');
+    case 400:
+    case 422:
+      return new JiraApiError('validation', status, `Jira rejected the request (${status}).`);
+    default:
+      return status >= 500 ? new JiraApiError('server', status, `Jira failed to process the request (${status}).`) : null;
+  }
+}
+
 function errorForStatus(status: number, retryAfterMs: number | null, purpose: Purpose = 'sync', detail: string | null = null): JiraApiError {
   if (purpose === 'write' && detail && status !== 401 && status !== 429) {
-    const kind = status === 403 ? 'forbidden' : status === 404 ? 'not_found' : status >= 500 ? 'server' : 'validation';
-    return new JiraApiError(kind, status, `Jira refused the request (${status}): ${detail}`);
+    return new JiraApiError(refusalKind(status), status, `Jira refused the request (${status}): ${detail}`);
   }
   if (purpose !== 'sync' && status !== 401 && status !== 429) {
-    const verb = purpose === 'write' ? 'this action' : 'reading this';
-    switch (status) {
-      case 403:
-        return new JiraApiError('forbidden', status, `Jira refused ${verb} for the configured account (403). Check its Operations permissions.`);
-      case 404:
-        return new JiraApiError('not_found', status, 'Jira did not find it (404). The alert may have been deleted.');
-      case 400:
-      case 422:
-        return new JiraApiError('validation', status, `Jira rejected the request (${status}).`);
-      default:
-        if (status >= 500) return new JiraApiError('server', status, `Jira failed to process the request (${status}).`);
-    }
+    const error = userRequestError(status, purpose);
+    if (error) return error;
   }
+  return syncError(status, retryAfterMs);
+}
+
+/** Messages for the background sync: they point at the configuration. */
+function syncError(status: number, retryAfterMs: number | null): JiraApiError {
   switch (status) {
     case 401:
       return new JiraApiError('auth', status, 'Jira rejected the credentials (401). Check JIRA_EMAIL and JIRA_API_TOKEN.');
@@ -167,12 +185,59 @@ function parseRetryAfter(header: string | null): number | null {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+const MAX_ATTEMPTS = 3;
+
+/**
+ * Reads are retried on network errors, 5xx and 429. Writes only on 429,
+ * which guarantees the first attempt was not processed.
+ */
+function isRetryable(error: unknown, isWrite: boolean): error is JiraApiError {
+  return (
+    error instanceof JiraApiError &&
+    (error.kind === 'rate_limit' || (!isWrite && (error.kind === 'network' || error.kind === 'server')))
+  );
+}
+
+/** The error for a response that is not OK. Jira's reason is read only from a refused write. */
+async function rejection(response: Response, purpose: Purpose, safePath: string): Promise<JiraApiError> {
+  const wantsReason = purpose === 'write' && response.status >= 400 && response.status < 500 && response.status !== 401 && response.status !== 429;
+  const detail = wantsReason ? await refusalText(response) : null;
+  if (!wantsReason) await response.body?.cancel().catch(() => undefined);
+  const retryAfter = response.headers.get('retry-after');
+  log.warn('jira request rejected', { path: safePath, status: response.status, ...(retryAfter ? { retryAfter } : {}) });
+  return errorForStatus(response.status, parseRetryAfter(response.headers.get('retry-after')), purpose, detail);
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  try {
+    // 204 No Content, or an empty 202.
+    const text = await response.text();
+    return text === '' ? {} : JSON.parse(text);
+  } catch {
+    throw new JiraApiError('schema', response.status, 'Jira returned a response that is not valid JSON.');
+  }
+}
+
+function parseResponse<S extends z.ZodType>(json: unknown, schema: S, status: number, safePath: string): z.infer<S> {
+  const parsed = schema.safeParse(json);
+  if (!parsed.success) {
+    // Field paths only: the values could be alert content.
+    const paths = parsed.error.issues.slice(0, 5).map((i) => i.path.join('.') || '(root)');
+    log.error('jira response failed validation', { path: safePath, fields: paths.join(',') });
+    throw new JiraApiError('schema', status, 'Jira returned an unexpected response format.');
+  }
+  return parsed.data;
+}
+
 /** Request body of Create global / team maintenance (CreateMaintenanceRequest), as documented. */
+export type MaintenanceEntityType = 'integration' | 'policy' | 'sync';
+export type MaintenanceRuleState = 'disabled' | 'enabled';
+
 export interface CreateMaintenanceBody {
   description?: string;
   startDate?: string;
   endDate?: string;
-  rules: Array<{ entity: { id: string; type: 'integration' | 'policy' | 'sync' }; state: 'disabled' | 'enabled' }>;
+  rules: Array<{ entity: { id: string; type: MaintenanceEntityType }; state: MaintenanceRuleState }>;
 }
 
 /** Request body of Create alert, as documented. */
@@ -196,6 +261,12 @@ interface RequestOptions {
   body?: unknown;
   authenticated?: boolean;
   purpose?: Purpose;
+}
+
+function maintenanceEntityPath(kind: 'integration' | 'policy' | 'sync'): string {
+  if (kind === 'integration') return '/v1/integrations';
+  if (kind === 'policy') return '/v1/alerts/policies';
+  return '/v1/syncs';
 }
 
 function toTime(value: string | null | undefined): number | null {
@@ -246,7 +317,8 @@ export class JiraClient {
     private readonly maxConcurrency = 4,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {
-    this.authorization = `Basic ${Buffer.from(`${config.email}:${config.apiToken}`).toString('base64')}`;
+    const credentials = `${config.email}:${config.apiToken}`;
+    this.authorization = `Basic ${Buffer.from(credentials).toString('base64')}`;
   }
 
   async listAlerts(params: ListAlertsParams): Promise<AlertPage> {
@@ -386,8 +458,7 @@ export class JiraClient {
 
   /** What a maintenance rule can point at: integrations, global alert policies or syncs. */
   listMaintenanceEntities(kind: 'integration' | 'policy' | 'sync'): Promise<Array<z.infer<typeof OpsEntitySchema>>> {
-    const path = kind === 'integration' ? '/v1/integrations' : kind === 'policy' ? '/v1/alerts/policies' : '/v1/syncs';
-    return this.pages(path, OpsEntitySchema, 100, 5);
+    return this.pages(maintenanceEntityPath(kind), OpsEntitySchema, 100, 5);
   }
 
   /** Schedules with their owning team (size is at most 50 for this endpoint). */
@@ -559,37 +630,50 @@ export class JiraClient {
     const isWrite = (options.method ?? 'GET') !== 'GET';
     await this.acquire();
     try {
-      const maxAttempts = 3;
       for (let attempt = 1; ; attempt += 1) {
         // After a 429, every request waits, not only the one that was refused.
-        const pause = this.pausedUntil - Date.now();
-        if (pause > 0) {
-          if (pause > 10_000) throw new JiraApiError('rate_limit', 429, 'Jira rate limit reached (429). The backend is waiting before it retries.', pause);
-          await sleep(pause);
-        }
+        const pause = this.pendingPause();
+        if (pause > 0) await sleep(pause);
         try {
           return await this.attempt(url, schema, options);
         } catch (error) {
-          if (error instanceof JiraApiError && error.kind === 'rate_limit') {
-            const wait = error.retryAfterMs ?? 1000 * attempt;
-            this.pausedUntil = Math.max(this.pausedUntil, Date.now() + wait);
-          }
-          const retryable =
-            error instanceof JiraApiError &&
-            (error.kind === 'rate_limit' || (!isWrite && (error.kind === 'network' || error.kind === 'server')));
-          if (!retryable || attempt >= maxAttempts) throw error;
-          if (error.kind === 'rate_limit') {
-            // The shared pause above does the waiting. A long Retry-After is
-            // not waited out here: the caller serves cached data instead.
-            if (this.pausedUntil - Date.now() > 10_000) throw error;
-            continue;
-          }
-          await sleep(500 * 2 ** (attempt - 1) + randomInt(250));
+          this.pauseAfterRateLimit(error, attempt);
+          const delay = this.retryDelay(error, attempt, isWrite);
+          if (delay > 0) await sleep(delay);
         }
       }
     } finally {
       this.release();
     }
+  }
+
+  /** How long every request still waits after a 429. A pause above 10 s fails at once. */
+  private pendingPause(): number {
+    const pause = this.pausedUntil - Date.now();
+    if (pause > 10_000) throw new JiraApiError('rate_limit', 429, 'Jira rate limit reached (429). The backend is waiting before it retries.', pause);
+    return pause;
+  }
+
+  /** A 429 pauses all requests, for Retry-After or one more second per attempt. */
+  private pauseAfterRateLimit(error: unknown, attempt: number): void {
+    if (error instanceof JiraApiError && error.kind === 'rate_limit') {
+      const wait = error.retryAfterMs ?? 1000 * attempt;
+      this.pausedUntil = Math.max(this.pausedUntil, Date.now() + wait);
+    }
+  }
+
+  /**
+   * The wait before the next attempt, or the error thrown again when there
+   * is none. A 429 returns 0: the shared pause does the waiting.
+   */
+  private retryDelay(error: unknown, attempt: number, isWrite: boolean): number {
+    if (!isRetryable(error, isWrite) || attempt >= MAX_ATTEMPTS) throw error;
+    if (error.kind === 'rate_limit') {
+      // A long Retry-After is not waited out here: the caller serves cached data instead.
+      if (this.pausedUntil - Date.now() > 10_000) throw error;
+      return 0;
+    }
+    return 500 * 2 ** (attempt - 1) + randomInt(250);
   }
 
   private async attempt<S extends z.ZodType>(url: string, schema: S, options: RequestOptions): Promise<z.infer<S>> {
@@ -604,10 +688,10 @@ export class JiraClient {
         method,
         headers: {
           Accept: 'application/json',
-          ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
           ...(authenticated ? { Authorization: this.authorization } : {}),
         },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         // Never follow a redirect with credentials attached.
         redirect: authenticated ? 'error' : 'follow',
         signal: AbortSignal.timeout(this.config.requestTimeoutMs),
@@ -619,31 +703,8 @@ export class JiraClient {
     }
 
     log.debug('jira request', { path: safePath, status: response.status, ms: Date.now() - started });
-    if (!response.ok) {
-      const wantsReason = purpose === 'write' && response.status >= 400 && response.status < 500 && response.status !== 401 && response.status !== 429;
-      const detail = wantsReason ? await refusalText(response) : null;
-      if (!wantsReason) await response.body?.cancel().catch(() => undefined);
-      const retryAfter = response.headers.get('retry-after');
-      log.warn('jira request rejected', { path: safePath, status: response.status, ...(retryAfter ? { retryAfter } : {}) });
-      throw errorForStatus(response.status, parseRetryAfter(response.headers.get('retry-after')), purpose, detail);
-    }
-
-    let json: unknown;
-    try {
-      // 204 No Content, or an empty 202.
-      const text = await response.text();
-      json = text === '' ? {} : JSON.parse(text);
-    } catch {
-      throw new JiraApiError('schema', response.status, 'Jira returned a response that is not valid JSON.');
-    }
-    const parsed = schema.safeParse(json);
-    if (!parsed.success) {
-      // Field paths only: the values could be alert content.
-      const paths = parsed.error.issues.slice(0, 5).map((i) => i.path.join('.') || '(root)');
-      log.error('jira response failed validation', { path: safePath, fields: paths.join(',') });
-      throw new JiraApiError('schema', response.status, 'Jira returned an unexpected response format.');
-    }
-    return parsed.data;
+    if (!response.ok) throw await rejection(response, purpose, safePath);
+    return parseResponse(await readJson(response), schema, response.status, safePath);
   }
 
   private acquire(): Promise<void> {

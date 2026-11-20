@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { BellOff, Check, CheckCheck, CircleCheck, Ellipsis, Loader2, Play, RotateCcw, TriangleAlert, UserPlus, X } from 'lucide-react';
 import type { ActionId, AlertAction } from '../../../shared/actions';
 import type { Alert } from '../../../shared/types';
@@ -19,6 +19,17 @@ const iconButton =
   'inline-flex size-7 flex-none items-center justify-center rounded-md border border-line-strong bg-panel text-muted hover:bg-hover hover:text-fg disabled:opacity-50';
 const menuItem = 'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-hover disabled:opacity-50';
 
+type TriggerRender = ComponentProps<typeof Popover>['trigger'];
+
+/** Pop-over trigger: an icon button whose label is also its tooltip. */
+function iconTrigger(label: string, icon: ReactNode, disabled: boolean): TriggerRender {
+  return (props) => (
+    <button type="button" {...props} className={iconButton} disabled={disabled} aria-label={label} data-tip={label} data-tip-always="">
+      {icon}
+    </button>
+  );
+}
+
 interface AlertActionsProps {
   alert: Alert;
   allowed: ReadonlySet<ActionId>;
@@ -36,7 +47,7 @@ export function typingIn(target: EventTarget | null): boolean {
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.closest('[role="dialog"]') !== null;
 }
 
-export function AlertActions({ alert, allowed, run, busy, customActions }: AlertActionsProps) {
+export function AlertActions({ alert, allowed, run, busy, customActions }: Readonly<AlertActionsProps>) {
   const closed = alert.status === 'closed';
   const [confirmClose, setConfirmClose] = useState(false);
   useEffect(() => {
@@ -132,11 +143,7 @@ export function AlertActions({ alert, allowed, run, busy, customActions }: Alert
       {can('snooze') && (
         <Popover
           label="Snooze"
-          trigger={(props) => (
-            <button type="button" {...props} className={iconButton} disabled={busy || closed} aria-label="Snooze" data-tip="Snooze" data-tip-always="">
-              <BellOff size={14} aria-hidden />
-            </button>
-          )}
+          trigger={iconTrigger('Snooze', <BellOff size={14} aria-hidden />, busy || closed)}
         >
           {(close) => (
             <SnoozePicker
@@ -152,11 +159,7 @@ export function AlertActions({ alert, allowed, run, busy, customActions }: Alert
       {can('assign') && (
         <Popover
           label="Assign"
-          trigger={(props) => (
-            <button type="button" {...props} className={iconButton} disabled={busy || closed} aria-label="Assign" data-tip="Assign" data-tip-always="">
-              <UserPlus size={14} aria-hidden />
-            </button>
-          )}
+          trigger={iconTrigger('Assign', <UserPlus size={14} aria-hidden />, busy || closed)}
         >
           {(close) => (
             <AssignPicker
@@ -174,11 +177,7 @@ export function AlertActions({ alert, allowed, run, busy, customActions }: Alert
           label="More actions"
           align="end"
           onOpenChange={(open) => !open && setSubmenu(null)}
-          trigger={(props) => (
-            <button type="button" {...props} className={iconButton} disabled={busy || closed} aria-label="More actions" data-tip="More actions" data-tip-always="">
-              <Ellipsis size={14} aria-hidden />
-            </button>
-          )}
+          trigger={iconTrigger('More actions', <Ellipsis size={14} aria-hidden />, busy || closed)}
         >
           {(close) => {
             const done = (action: AlertAction) => {
@@ -243,7 +242,7 @@ export function AlertActions({ alert, allowed, run, busy, customActions }: Alert
 }
 
 /** One line under the buttons: what is running, what happened. */
-export function ActionFeedback({ state, onDismiss }: { state: RunState; onDismiss: () => void }) {
+export function ActionFeedback({ state, onDismiss }: Readonly<{ state: RunState; onDismiss: () => void }>) {
   if (state.kind === 'idle') return null;
   let icon: ReactNode;
   let text: string;

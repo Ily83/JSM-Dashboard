@@ -79,7 +79,10 @@ function collect(alerts: readonly Alert[], keysOf: (alert: Alert) => readonly st
   for (const alert of [...alerts].sort(newestFirst)) {
     for (const key of new Set(keysOf(alert))) {
       let list = map.get(key);
-      if (!list) map.set(key, (list = []));
+      if (!list) {
+        list = [];
+        map.set(key, list);
+      }
       list.push(alert);
     }
   }
@@ -100,7 +103,8 @@ export function rankCustomers(alerts: readonly Alert[], p1Only: boolean): { entr
     const p1 = list.filter(isP1).length;
     return { key: name, label: name, count: list.length, p1, total: list.length, alerts: list };
   });
-  return { entries: entries.sort(byCount), withoutCustomer: input.filter((a) => a.customers.length === 0).length };
+  entries.sort(byCount);
+  return { entries, withoutCustomer: input.filter((a) => a.customers.length === 0).length };
 }
 
 /** Customers, services or alert groups ranked by their number of P1 alerts. */

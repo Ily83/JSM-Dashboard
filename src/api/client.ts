@@ -61,7 +61,8 @@ export function fetchAlerts(
   if (options.knownVersion) params.set('known', options.knownVersion);
   if (options.force) params.set('refresh', '1');
   const query = params.toString();
-  return getJson(`/api/alerts${query ? `?${query}` : ''}`, signal);
+  const search = query ? `?${query}` : '';
+  return getJson(`/api/alerts${search}`, signal);
 }
 
 export function fetchAlertDetail(id: string, signal?: AbortSignal): Promise<AlertDetail> {

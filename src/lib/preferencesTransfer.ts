@@ -118,59 +118,76 @@ function importViews(raw: unknown, ignored: string[]): { views: SavedView[]; def
   return { views, defaultViewId };
 }
 
-export function parseImportFile(text: string, parts: readonly TransferPart[]): ParseResult {
-  if (byteLength(text) > MAX_IMPORT_BYTES) return fail(`File is larger than ${MAX_IMPORT_BYTES / 1024} KB.`);
+/** Checks size, JSON, format and version of a file. Returns its content, or the error message. */
+function readTransferFile(text: string): Record<string, unknown> | string {
+  if (byteLength(text) > MAX_IMPORT_BYTES) return `File is larger than ${MAX_IMPORT_BYTES / 1024} KB.`;
   let json: unknown;
   try {
     json = JSON.parse(text);
   } catch {
-    return fail('Not a valid JSON file.');
+    return 'Not a valid JSON file.';
   }
   if (!isRecord(json) || (json.format !== PREFERENCES_FORMAT && json.format !== VIEW_FORMAT)) {
-    return fail('Not an Alert Center preferences or view file.');
+    return 'Not an Alert Center preferences or view file.';
   }
-  if (typeof json.version !== 'number') return fail('The file has no version.');
-  if (json.version > TRANSFER_VERSION) return fail('The file was made by a newer version of the Alert Center.');
-  if (json.version !== TRANSFER_VERSION) return fail(`Unsupported file version ${String(json.version)}.`);
-  const exportedAt = typeof json.exportedAt === 'string' && Number.isFinite(Date.parse(json.exportedAt)) ? json.exportedAt : null;
-  const ignored: string[] = [];
+  if (typeof json.version !== 'number') return 'The file has no version.';
+  if (json.version > TRANSFER_VERSION) return 'The file was made by a newer version of the Alert Center.';
+  if (json.version !== TRANSFER_VERSION) return `Unsupported file version ${String(json.version)}.`;
+  return json;
+}
 
-  if (json.format === VIEW_FORMAT) {
-    const { views } = importViews({ saved: [json.view] }, ignored);
-    if (views.length === 0) return fail('The view in this file is not valid.');
-    return { ok: true, payload: { kind: 'view', exportedAt, parts: [], views, defaultViewId: null, ignored: [] } };
+function importViewFile(view: unknown, exportedAt: string | null): ParseResult {
+  const { views } = importViews({ saved: [view] }, []);
+  if (views.length === 0) return fail('The view in this file is not valid.');
+  return { ok: true, payload: { kind: 'view', exportedAt, parts: [], views, defaultViewId: null, ignored: [] } };
+}
+
+/** One part of a preferences file, sanitized by its store. Null, and noted in `ignored`, when it cannot be used. */
+function importPart(key: string, raw: unknown, part: TransferPart | undefined, ignored: string[]): ImportedPart | null {
+  if (!part) {
+    ignored.push(shorten(key));
+    return null;
   }
+  if (!isRecord(raw)) {
+    ignored.push(part.label);
+    return null;
+  }
+  try {
+    return { key, label: part.label, value: part.sanitize(raw) };
+  } catch {
+    ignored.push(part.label);
+    return null;
+  }
+}
 
-  if (!isRecord(json.data)) return fail('The file contains no preferences.');
+function importPreferences(data: Record<string, unknown>, parts: readonly TransferPart[], exportedAt: string | null): ParseResult {
   const known = new Map(parts.map((part) => [part.key, part]));
+  const ignored: string[] = [];
   const imported: ImportedPart[] = [];
   let views: SavedView[] = [];
   let defaultViewId: string | null = null;
-  for (const [key, raw] of Object.entries(json.data)) {
+  for (const [key, raw] of Object.entries(data)) {
     if (key === VIEWS_KEY) {
       ({ views, defaultViewId } = importViews(raw, ignored));
       continue;
     }
-    const part = known.get(key);
-    if (!part) {
-      ignored.push(shorten(key));
-      continue;
-    }
-    if (!isRecord(raw)) {
-      ignored.push(part.label);
-      continue;
-    }
-    try {
-      imported.push({ key, label: part.label, value: part.sanitize(raw) });
-    } catch {
-      ignored.push(part.label);
-    }
+    const part = importPart(key, raw, known.get(key), ignored);
+    if (part) imported.push(part);
   }
   if (imported.length === 0 && views.length === 0) return fail('Nothing to import in this file.');
   return {
     ok: true,
     payload: { kind: 'preferences', exportedAt, parts: imported, views, defaultViewId, ignored: ignored.slice(0, 10) },
   };
+}
+
+export function parseImportFile(text: string, parts: readonly TransferPart[]): ParseResult {
+  const json = readTransferFile(text);
+  if (typeof json === 'string') return fail(json);
+  const exportedAt = typeof json.exportedAt === 'string' && Number.isFinite(Date.parse(json.exportedAt)) ? json.exportedAt : null;
+  if (json.format === VIEW_FORMAT) return importViewFile(json.view, exportedAt);
+  if (!isRecord(json.data)) return fail('The file contains no preferences.');
+  return importPreferences(json.data, parts, exportedAt);
 }
 
 // ---- Import: saved views -------------------------------------------------------

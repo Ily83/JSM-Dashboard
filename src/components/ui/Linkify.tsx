@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, type ReactNode } from 'react';
 
 /**
  * Plain text with web addresses turned into links. Only http and https are
@@ -42,20 +42,23 @@ export function splitLinks(text: string): Array<{ text: string; href?: string }>
   return parts;
 }
 
-export function Linkify({ text }: { text: string }) {
-  return (
-    <>
-      {splitLinks(text).map((part, i) =>
-        part.href ? (
-          <a key={i} href={part.href} target="_blank" rel="noopener noreferrer" className="break-all text-accent hover:underline">
-            {part.text}
-          </a>
-        ) : (
-          <Fragment key={i}>{part.text}</Fragment>
-        ),
-      )}
-    </>
-  );
+export function Linkify({ text }: Readonly<{ text: string }>) {
+  // The parts are consecutive slices of the text: each is keyed by where it starts.
+  const nodes: ReactNode[] = [];
+  let start = 0;
+  for (const part of splitLinks(text)) {
+    nodes.push(
+      part.href ? (
+        <a key={start} href={part.href} target="_blank" rel="noopener noreferrer" className="break-all text-accent hover:underline">
+          {part.text}
+        </a>
+      ) : (
+        <Fragment key={start}>{part.text}</Fragment>
+      ),
+    );
+    start += part.text.length;
+  }
+  return <>{nodes}</>;
 }
 
 const RUNBOOK_KEY = /runbook|playbook|procedure|wiki|knowledge|kb\b|sop/i;

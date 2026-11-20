@@ -4,7 +4,7 @@ import type { JiraConfig } from '../config';
 import type { CustomerMap } from '../customerMap';
 import { log } from '../logger';
 import type { AlertSource, HistoryPage, SourceSnapshot } from '../services/source';
-import { JiraApiError, JiraClient, MAX_OFFSET_PLUS_SIZE, MAX_PAGE_SIZE } from './client';
+import { JiraApiError, JiraClient, MAX_OFFSET_PLUS_SIZE, MAX_PAGE_SIZE, type AlertPage } from './client';
 import { mapAlert, toListItem, type MapContext } from './mapper';
 import type { RawAlert } from './schemas';
 
@@ -47,10 +47,25 @@ interface FetchResult {
   skipped: number;
 }
 
+/** Adds the alerts of one page by id and returns how many items it skipped. */
+function collectPage(byId: Map<string, RawAlert>, page: AlertPage): number {
+  for (const raw of page.alerts) byId.set(raw.id, raw);
+  return page.skipped;
+}
+
+/** Offsets of the pages after the first one, up to `wanted` alerts and the API's offset limit. */
+function laterOffsets(pageSize: number, wanted: number): number[] {
+  const offsets: number[] = [];
+  for (let offset = pageSize; offset < wanted && offset + pageSize < MAX_OFFSET_PLUS_SIZE; offset += pageSize) {
+    offsets.push(offset);
+  }
+  return offsets;
+}
+
 export class JiraSource implements AlertSource {
   readonly mode = 'live' as const;
   private lastFullAt = 0;
-  private teamNames: Map<string, string> = new Map();
+  private readonly teamNames: Map<string, string> = new Map();
   private readonly details = new Map<string, CachedDetail>();
   private readonly ctx: MapContext;
 
@@ -207,7 +222,7 @@ export class JiraSource implements AlertSource {
     let next = 0;
     const worker = async () => {
       while (!stop && next < candidates.length) {
-        const alert = candidates[next++]!;
+        const alert = candidates[next++];
         try {
           const detail = await this.loadDetail(alert.id);
           if (detail) alerts.set(detail.id, detail);
@@ -223,37 +238,41 @@ export class JiraSource implements AlertSource {
   /** Reads every page of a query, up to `limit` alerts. */
   private async fetchAll(query: string, limit: number): Promise<FetchResult> {
     const byId = new Map<string, RawAlert>();
-    let skipped = 0;
     const pageSize = Math.min(MAX_PAGE_SIZE, limit);
 
     const first = await this.client.listAlerts({ query, offset: 0, size: pageSize });
-    for (const raw of first.alerts) byId.set(raw.id, raw);
-    skipped += first.skipped;
+    let skipped = collectPage(byId, first);
     if (!first.hasNext) return { raws: [...byId.values()], total: first.total, skipped };
 
-    const offsets: number[] = [];
-    const wanted = Math.min(limit, first.total ?? limit);
-    for (let offset = pageSize; offset < wanted && offset + pageSize < MAX_OFFSET_PLUS_SIZE; offset += pageSize) {
-      offsets.push(offset);
-    }
-
-    if (first.total !== null) {
-      // Total is known: remaining pages can be requested concurrently
-      // (the client caps concurrency).
-      const pages = await Promise.all(offsets.map((offset) => this.client.listAlerts({ query, offset, size: pageSize })));
-      for (const page of pages) {
-        for (const raw of page.alerts) byId.set(raw.id, raw);
-        skipped += page.skipped;
-      }
-    } else {
-      for (const offset of offsets) {
-        const page = await this.client.listAlerts({ query, offset, size: pageSize });
-        for (const raw of page.alerts) byId.set(raw.id, raw);
-        skipped += page.skipped;
-        if (!page.hasNext) break;
-      }
-    }
+    const offsets = laterOffsets(pageSize, Math.min(limit, first.total ?? limit));
+    const laterSkipped =
+      first.total === null
+        ? await this.fetchPagesInOrder(query, offsets, pageSize, byId)
+        : await this.fetchPagesConcurrently(query, offsets, pageSize, byId);
+    skipped += laterSkipped;
     return { raws: [...byId.values()].slice(0, limit), total: first.total, skipped };
+  }
+
+  /**
+   * Total is known: remaining pages can be requested concurrently (the
+   * client caps concurrency). Returns the number of skipped items.
+   */
+  private async fetchPagesConcurrently(query: string, offsets: number[], size: number, byId: Map<string, RawAlert>): Promise<number> {
+    const pages = await Promise.all(offsets.map((offset) => this.client.listAlerts({ query, offset, size })));
+    let skipped = 0;
+    for (const page of pages) skipped += collectPage(byId, page);
+    return skipped;
+  }
+
+  /** Total is unknown: one page after the other until the last. Returns the number of skipped items. */
+  private async fetchPagesInOrder(query: string, offsets: number[], size: number, byId: Map<string, RawAlert>): Promise<number> {
+    let skipped = 0;
+    for (const offset of offsets) {
+      const page = await this.client.listAlerts({ query, offset, size });
+      skipped += collectPage(byId, page);
+      if (!page.hasNext) break;
+    }
+    return skipped;
   }
 
   private query(base: string): string {

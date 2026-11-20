@@ -49,6 +49,13 @@ interface StoredMaintenance {
   rules: NewMaintenanceRequest['rules'];
 }
 
+function maintenanceStatus(m: StoredMaintenance, t: number): Maintenance['status'] {
+  if (m.cancelled) return 'cancelled';
+  if (t < m.start) return 'planned';
+  if (t < m.end) return 'active';
+  return 'past';
+}
+
 export class DemoOpsContext implements OpsContextSource {
   private readonly stored: StoredMaintenance[];
   private next = 1;
@@ -84,8 +91,7 @@ export class DemoOpsContext implements OpsContextSource {
   }
 
   private view(m: StoredMaintenance): Maintenance {
-    const t = this.now();
-    const status = m.cancelled ? 'cancelled' : t < m.start ? 'planned' : t < m.end ? 'active' : 'past';
+    const status = maintenanceStatus(m, this.now());
     return {
       id: m.id,
       teamId: m.teamId,
@@ -163,7 +169,7 @@ export class DemoOpsContext implements OpsContextSource {
     return {
       schedules: DEMO_SCHEDULES.map((schedule, i) => {
         const teamId = SCHEDULE_TEAM[schedule.id] ?? null;
-        const user = DEMO_USERS[(hour + i * 2) % DEMO_USERS.length]!;
+        const user = DEMO_USERS[(hour + i * 2) % DEMO_USERS.length];
         const escalation = teamId ? DEMO_ESCALATIONS[teamId]?.[0] : undefined;
         return {
           id: schedule.id,

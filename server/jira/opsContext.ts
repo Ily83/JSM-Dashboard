@@ -53,7 +53,7 @@ async function twoAtATime<T, R>(items: readonly T[], task: (item: T) => Promise<
   const worker = async () => {
     while (next < items.length) {
       const index = next++;
-      results[index] = await task(items[index]!);
+      results[index] = await task(items[index]);
     }
   };
   await Promise.all([worker(), worker()]);
@@ -111,9 +111,15 @@ export function coverageOf(maintenances: readonly Maintenance[]): MaintenancesRe
   return coverage;
 }
 
+/** Active first, then planned, then the rest. */
+function maintenanceRank(m: Maintenance): number {
+  if (m.status === 'active') return 0;
+  if (m.status === 'planned') return 1;
+  return 2;
+}
+
 export function sortMaintenances(list: Maintenance[]): Maintenance[] {
-  const rank = (m: Maintenance) => (m.status === 'active' ? 0 : m.status === 'planned' ? 1 : 2);
-  return list.sort((a, b) => rank(a) - rank(b) || (a.startDate ?? 0) - (b.startDate ?? 0));
+  return list.sort((a, b) => maintenanceRank(a) - maintenanceRank(b) || (a.startDate ?? 0) - (b.startDate ?? 0));
 }
 
 const HEARTBEAT_STATUSES: ReadonlySet<string> = new Set(['Unresponsive', 'Responsive', 'Off', 'Pending']);

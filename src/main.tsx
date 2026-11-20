@@ -10,18 +10,14 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnReconnect: true } },
 });
 
-async function start(): Promise<void> {
-  // A server-backed preference store would load the user's preferences here.
-  await getPreferenceStorage().hydrate?.();
-  applyDefaultViewOnStart();
+// A server-backed preference store would load the user's preferences here.
+await getPreferenceStorage().hydrate?.();
+applyDefaultViewOnStart();
 
-  createRoot(document.getElementById('root')!).render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <App />
-      </QueryClientProvider>
-    </StrictMode>,
-  );
-}
-
-void start();
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
+  </StrictMode>,
+);

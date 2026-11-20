@@ -26,7 +26,6 @@ export interface WidgetActions {
 export interface WidgetProps {
   stats: DashboardStats;
   w: number;
-  h: number;
   /** Pixel height of the content area. */
   height: number;
   actions: WidgetActions;
@@ -74,7 +73,7 @@ function Kpi({ label, value, hint, tone, onClick }: KpiProps) {
   );
 }
 
-function Panel({ title, children }: { title: string; children: ReactNode }) {
+function Panel({ title, children }: Readonly<{ title: string; children: ReactNode }>) {
   return (
     <section className="flex h-full min-w-0 flex-col rounded-md border border-line bg-panel">
       <h3 className="flex-none truncate px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted">{title}</h3>
@@ -85,10 +84,10 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
 
 const ROW = 24;
 
-function RankedList({ items, height, onPick, asBadge }: { items: Ranked[]; height: number; onPick: (name: string) => void; asBadge?: boolean }) {
+function RankedList({ items, height, onPick, asBadge }: Readonly<{ items: Ranked[]; height: number; onPick: (name: string) => void; asBadge?: boolean }>) {
   if (items.length === 0) return <p className="px-1.5 py-1 text-xs text-subtle">None</p>;
   const rows = Math.max(1, Math.floor((height - 30) / ROW));
-  const max = items[0]!.count;
+  const max = items[0].count;
   return (
     <ul>
       {items.slice(0, rows).map((item) => (
@@ -118,7 +117,7 @@ function RankedList({ items, height, onPick, asBadge }: { items: Ranked[]; heigh
 
 const PRIORITY_VAR: Record<Priority, string> = { P1: 'var(--p1)', P2: 'var(--p2)', P3: 'var(--p3)', P4: 'var(--p4)', P5: 'var(--p5)' };
 
-function PriorityBreakdown({ stats, actions }: WidgetProps) {
+function PriorityBreakdown({ stats, actions }: Readonly<Pick<WidgetProps, 'stats' | 'actions'>>) {
   const total = stats.active;
   return (
     <Panel title="Alerts by priority">
@@ -145,7 +144,7 @@ function PriorityBreakdown({ stats, actions }: WidgetProps) {
   );
 }
 
-function Attention({ stats, height, actions }: WidgetProps) {
+function Attention({ stats, height, actions }: Readonly<Pick<WidgetProps, 'stats' | 'height' | 'actions'>>) {
   const now = useNow();
   const rows = Math.max(1, Math.floor((height - 30) / ROW));
   return (
