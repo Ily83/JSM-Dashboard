@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode, type MouseEvent, type PointerEvent } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode, type MouseEvent, type PointerEvent } from 'react';
 import { getCoreRowModel, getSortedRowModel, useReactTable, type Header, type SortingState, type Updater } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, ChevronRight, Copy } from 'lucide-react';
@@ -9,13 +9,14 @@ import { alertsOfItem, buildTableItems, itemKey, type LaneBy, type TableItem } f
 import { ActivityStrip } from '../ActivityStrip';
 import type { AlertContextMenu } from '../actions/BulkActions';
 import { CustomerBadge, PriorityBadge } from '../ui/badges';
+import type { MenuAnchor } from '../ui/menuPlacement';
 import { COLUMN_INFO, type ColumnId } from '../../config/columns';
 import { isCritical } from '../../config/sections';
 import { useStore } from '../../lib/store';
 import type { Density } from '../../state/prefs';
 import { tableLayoutStore, type TableLayout } from '../../state/tableLayout';
 import { COLUMNS, renderCell, type CellOptions } from './columns';
-import { arrowToggles, checkState, countSelected, navigationTarget } from './tableHelpers';
+import { arrowToggles, checkState, countSelected, dragMode, navigationTarget, rowAtContentY } from './tableHelpers';
 
 /**
  * The alert table.
@@ -32,7 +33,10 @@ import { arrowToggles, checkState, countSelected, navigationTarget } from './tab
  *
  * Optional features
  *  - Selection: a checkbox column (Shift+click selects a range, X toggles
- *    the focused row) for bulk actions.
+ *    the focused row) for bulk actions. Dragging from the checkbox column,
+ *    or mostly up or down from anywhere in a row, draws a selection
+ *    rectangle (Ctrl adds, Esc cancels); dragging sideways selects text.
+ *  - Alert menu: right-click, Shift+F10 or the ContextMenu key on a row.
  *  - Group repeats: alerts that share a group key (src/lib/alertGroups.ts)
  *    collapse into one expandable row showing distinct records, total
  *    occurrences and a 24-hour activity strip. Groups keep the position of
@@ -70,6 +74,30 @@ interface AlertTableProps {
 interface RowColumn {
   id: ColumnId;
   size: number;
+}
+
+/** A mouse press on a row that may become a rectangle selection. */
+interface DragState {
+  pointerId: number;
+  /** Where the press happened, on screen, for the drag threshold. */
+  downX: number;
+  downY: number;
+  /** The latest pointer position, on screen. */
+  clientX: number;
+  clientY: number;
+  /** Where the press happened in the table's content (scroll offsets included): the box's fixed corner. */
+  anchorX: number;
+  anchorY: number;
+  startIndex: number;
+  /** Last row the box reached; the selection is only rebuilt when it changes. */
+  endIndex: number;
+  /** Started in the checkbox column: always a rectangle, never text. */
+  fromGutter: boolean;
+  /** Selection the drag adds to (Ctrl or Cmd held), else empty. */
+  base: Set<string>;
+  /** Selection before the drag, restored by Escape. */
+  before: Set<string>;
+  active: boolean;
 }
 
 function apply<T>(updater: Updater<T>, current: T): T {
@@ -176,106 +204,210 @@ export const AlertTable = memo(function AlertTable({
   itemsRef.current = items;
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
-  const dragSelection = useRef<{ pointerId: number; x: number; y: number; currentX: number; currentY: number; startIndex: number; base: Set<string>; active: boolean } | null>(null);
-  const scrollFrame = useRef<number | null>(null);
+  const dragSelection = useRef<DragState | null>(null);
+  const dragFrame = useRef<number | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+  // The click that ends a rectangle drag, a text drag or a double-click must not open or toggle the row.
   const suppressClick = useRef(false);
-  const [selectionBox, setSelectionBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
-  useEffect(() => () => {
-    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
-  }, []);
+  const dragCleanup = useRef<(() => void) | null>(null);
+  useEffect(
+    () => () => {
+      if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+      dragCleanup.current?.();
+    },
+    [],
+  );
 
-  const rowIndexAt = (clientY: number) => {
+  /** One frame of a rectangle drag: scroll at the edges, move the box, select the rows it covers. */
+  const dragTick = () => {
+    dragFrame.current = null;
+    const drag = dragSelection.current;
     const element = scrollRef.current;
-    if (!element || itemsRef.current.length === 0) return 0;
-    return Math.max(0, Math.min(itemsRef.current.length - 1, Math.floor((clientY - element.getBoundingClientRect().top + element.scrollTop - HEADER_HEIGHT) / rowHeight)));
+    if (!drag?.active || !element || !onSelectionChange) return;
+    const rect = element.getBoundingClientRect();
+    let step = 0;
+    if (drag.clientY < rect.top + HEADER_HEIGHT + 32) step = -12;
+    else if (drag.clientY > rect.bottom - 32) step = 12;
+    const before = element.scrollTop;
+    if (step) element.scrollTop += step;
+    // The pointer in content coordinates, like the anchor, so the box stays on its rows while scrolling.
+    const x = Math.max(rect.left, Math.min(rect.right, drag.clientX)) - rect.left + element.scrollLeft;
+    const y = Math.max(rect.top + HEADER_HEIGHT, Math.min(rect.bottom, drag.clientY)) - rect.top + element.scrollTop;
+    const box = boxRef.current;
+    if (box) {
+      box.style.left = `${Math.min(drag.anchorX, x)}px`;
+      box.style.top = `${Math.min(drag.anchorY, y)}px`;
+      box.style.width = `${Math.abs(x - drag.anchorX)}px`;
+      box.style.height = `${Math.abs(y - drag.anchorY)}px`;
+    }
+    const end = rowAtContentY(y, HEADER_HEIGHT, rowHeight, itemsRef.current.length);
+    if (end !== drag.endIndex) {
+      drag.endIndex = end;
+      const next = new Set(drag.base);
+      for (let i = Math.min(drag.startIndex, end); i <= Math.max(drag.startIndex, end); i += 1) {
+        const item = itemsRef.current[i];
+        if (item && item.kind !== 'lane') for (const alert of alertsOfItem(item)) next.add(alert.id);
+      }
+      onSelectionChange(next);
+    }
+    // Keep scrolling while the pointer rests at an edge.
+    if (step && element.scrollTop !== before) dragFrame.current = requestAnimationFrame(dragTick);
+  };
+  const scheduleDragTick = () => {
+    dragFrame.current ??= requestAnimationFrame(dragTick);
+  };
+  const dragTickRef = useRef(dragTick);
+  dragTickRef.current = dragTick;
+  // The box element exists from this commit on: draw it at once rather than on the next move.
+  useLayoutEffect(() => {
+    if (!dragging) return;
+    if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+    dragTickRef.current();
+  }, [dragging]);
+
+  /** Ends a drag; `cancel` (Escape) puts back the selection from before it. */
+  const endDrag = (cancel = false) => {
+    const drag = dragSelection.current;
+    if (!drag) return;
+    dragSelection.current = null;
+    if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+    dragFrame.current = null;
+    if (!drag.active) return;
+    dragCleanup.current?.();
+    dragCleanup.current = null;
+    if (scrollRef.current) scrollRef.current.style.userSelect = '';
+    setDragging(false);
+    if (cancel) {
+      // The button is still down: its release must not click the row.
+      suppressClick.current = true;
+      onSelectionChange?.(new Set(drag.before));
+    }
+  };
+  const endDragRef = useRef(endDrag);
+  endDragRef.current = endDrag;
+
+  const startRectangle = (drag: DragState, event: PointerEvent<HTMLDivElement>) => {
+    drag.active = true;
+    // Text selection may have begun in the first pixels; a rectangle drag replaces it.
+    globalThis.getSelection()?.removeAllRanges();
+    event.currentTarget.style.userSelect = 'none';
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
+    const onBlur = () => endDragRef.current();
+    const onKey = (keyEvent: globalThis.KeyboardEvent) => {
+      if (keyEvent.key !== 'Escape') return;
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      endDragRef.current(true);
+    };
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('keydown', onKey, true);
+    dragCleanup.current = () => {
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('keydown', onKey, true);
+    };
   };
 
   const onSelectionPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    suppressClick.current = false;
+    // No preventDefault: a press still focuses the row and can start a text selection.
     if (!selectable || event.button !== 0 || event.pointerType !== 'mouse') return;
     const target = event.target as HTMLElement;
     const row = target.closest<HTMLElement>('.at-row[data-index]');
-    if (!row || row.hasAttribute('data-lane') || target.closest('button, input, a, [role="button"]')) return;
+    if (!row || row.hasAttribute('data-lane') || target.closest('button, a, [role="button"], input:not([type="checkbox"])')) return;
+    const element = event.currentTarget;
+    const rect = element.getBoundingClientRect();
     dragSelection.current = {
       pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      currentX: event.clientX,
-      currentY: event.clientY,
+      downX: event.clientX,
+      downY: event.clientY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      anchorX: event.clientX - rect.left + element.scrollLeft,
+      anchorY: event.clientY - rect.top + element.scrollTop,
       startIndex: Number(row.dataset.index),
+      endIndex: -1,
+      fromGutter: target.closest('.at-select') !== null,
       base: event.ctrlKey || event.metaKey ? new Set(selectionRef.current) : new Set(),
+      before: new Set(selectionRef.current),
       active: false,
     };
-    event.preventDefault();
-  };
-
-  const updateDragSelection = (drag: NonNullable<typeof dragSelection.current>) => {
-    const element = scrollRef.current;
-    if (!element || !onSelectionChange) return;
-    const rect = element.getBoundingClientRect();
-    const x = Math.max(rect.left, Math.min(rect.right, drag.currentX));
-    const y = Math.max(rect.top + HEADER_HEIGHT, Math.min(rect.bottom, drag.currentY));
-    setSelectionBox({ left: Math.min(drag.x, x), top: Math.min(drag.y, y), width: Math.abs(x - drag.x), height: Math.abs(y - drag.y) });
-    const end = rowIndexAt(y);
-    const next = new Set(drag.base);
-    for (let i = Math.min(drag.startIndex, end); i <= Math.max(drag.startIndex, end); i += 1) {
-      const item = itemsRef.current[i];
-      if (item && item.kind !== 'lane') for (const alert of alertsOfItem(item)) next.add(alert.id);
-    }
-    onSelectionChange(next);
-  };
-
-  const autoScrollSelection = () => {
-    const drag = dragSelection.current;
-    const element = scrollRef.current;
-    if (!drag?.active || !element) {
-      scrollFrame.current = null;
-      return;
-    }
-    const rect = element.getBoundingClientRect();
-    const step = drag.currentY < rect.top + HEADER_HEIGHT + 32 ? -12 : drag.currentY > rect.bottom - 32 ? 12 : 0;
-    if (step) {
-      const previous = element.scrollTop;
-      element.scrollTop += step;
-      if (previous !== element.scrollTop) updateDragSelection(drag);
-    }
-    scrollFrame.current = requestAnimationFrame(autoScrollSelection);
   };
 
   const onSelectionPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const drag = dragSelection.current;
     if (!drag || drag.pointerId !== event.pointerId || !onSelectionChange) return;
-    if (!drag.active && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
-    if (!drag.active) {
-      drag.active = true;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      scrollFrame.current = requestAnimationFrame(autoScrollSelection);
+    // Released outside the window: no pointerup arrived.
+    if ((event.buttons & 1) === 0) {
+      endDrag();
+      return;
     }
-    drag.currentX = event.clientX;
-    drag.currentY = event.clientY;
-    updateDragSelection(drag);
+    drag.clientX = event.clientX;
+    drag.clientY = event.clientY;
+    if (!drag.active) {
+      const mode = dragMode(event.clientX - drag.downX, event.clientY - drag.downY, drag.fromGutter);
+      if (mode === 'wait') return;
+      if (mode === 'text') {
+        // Native text selection goes on; its release must not open the row.
+        dragSelection.current = null;
+        suppressClick.current = true;
+        return;
+      }
+      startRectangle(drag, event);
+    }
+    scheduleDragTick();
   };
 
-  const onSelectionPointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+  const onSelectionPointerUp = (event: PointerEvent<HTMLDivElement>) => {
     const drag = dragSelection.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     if (drag.active) suppressClick.current = true;
-    dragSelection.current = null;
-    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
-    scrollFrame.current = null;
-    setSelectionBox(null);
+    endDrag();
   };
 
-  const onRowContextMenu = (event: MouseEvent<HTMLDivElement>) => {
-    if (!selectable || !onSelectionChange || !onContextMenu) return;
-    const row = (event.target as HTMLElement).closest<HTMLElement>('.at-row[data-index]');
-    if (!row) return;
-    const item = itemsRef.current[Number(row.dataset.index)];
-    if (!item || item.kind === 'lane') return;
-    event.preventDefault();
+  /** Puts focus back on the row a menu was opened from, or on the row now at its place. */
+  const restoreRowFocus = (row: HTMLElement, index: number) => {
+    const target = row.isConnected ? row : scrollRef.current?.querySelector<HTMLElement>(`.at-row[data-index="${index}"]`);
+    target?.focus({ preventScroll: true });
+  };
+
+  /** Opens the alert menu for a row: at the pointer, or against the row when opened by keyboard. */
+  const openMenu = (index: number, row: HTMLElement, point: { x: number; y: number } | null): boolean => {
+    if (!selectable || !onSelectionChange || !onContextMenu) return false;
+    const item = itemsRef.current[index];
+    if (!item || item.kind === 'lane') return false;
     const targets = alertsOfItem(item);
     const current = selectionRef.current ?? new Set<string>();
     if (!targets.every((alert) => current.has(alert.id))) onSelectionChange(new Set(targets.map((alert) => alert.id)));
-    onContextMenu({ x: event.clientX, y: event.clientY, alertId: item.kind === 'alert' ? item.alert.id : null });
+    setActiveIndex(index);
+    let anchor: MenuAnchor;
+    if (point) {
+      anchor = { kind: 'point', x: point.x, y: point.y };
+    } else {
+      const rowRect = row.getBoundingClientRect();
+      const left = Math.max(rowRect.left, scrollRef.current?.getBoundingClientRect().left ?? rowRect.left) + SELECT_WIDTH;
+      anchor = { kind: 'rect', left, right: left, top: rowRect.top, bottom: rowRect.bottom };
+    }
+    onContextMenu({ anchor, alertId: item.kind === 'alert' ? item.alert.id : null, restoreFocus: () => restoreRowFocus(row, index) });
+    return true;
+  };
+
+  // A keyboard-opened menu may be followed by the browser's own contextmenu event.
+  const keyboardMenuAt = useRef(Number.NEGATIVE_INFINITY);
+
+  const onRowContextMenu = (event: MouseEvent<HTMLDivElement>) => {
+    const row = (event.target as HTMLElement).closest<HTMLElement>('.at-row[data-index]');
+    if (!row || !selectable || !onContextMenu) return;
+    // A contextmenu event without the right button comes from the keyboard: anchor to the row,
+    // unless the key handler has just opened the menu for that same key press.
+    const fromKeyboard = event.button !== 2;
+    if (fromKeyboard && event.timeStamp - keyboardMenuAt.current < 1000) {
+      event.preventDefault();
+      return;
+    }
+    const point = fromKeyboard ? null : { x: event.clientX, y: event.clientY };
+    if (openMenu(Number(row.dataset.index), row, point)) event.preventDefault();
   };
 
   const onCheck = useCallback(
@@ -359,7 +491,10 @@ export const AlertTable = memo(function AlertTable({
     const page = Math.max(1, Math.floor((scrollRef.current?.clientHeight ?? 300) / rowHeight) - 2);
     const target = navigationTarget(event.key, index, page, items.length);
     const item = items[index];
-    if (target !== undefined) {
+    if ((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu') {
+      event.preventDefault();
+      if (openMenu(index, rowElement, null)) keyboardMenuAt.current = event.timeStamp;
+    } else if (target !== undefined) {
       event.preventDefault();
       focusRow(target);
     } else if (event.key === 'Enter' || event.key === ' ') {
@@ -419,18 +554,24 @@ export const AlertTable = memo(function AlertTable({
       style={sizeVars}
       onPointerDown={onSelectionPointerDown}
       onPointerMove={onSelectionPointerMove}
-      onPointerUp={onSelectionPointerEnd}
-      onPointerCancel={() => {
-        dragSelection.current = null;
-        if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
-        scrollFrame.current = null;
-        setSelectionBox(null);
-      }}
+      onPointerUp={onSelectionPointerUp}
+      onPointerCancel={() => endDrag()}
+      onLostPointerCapture={() => endDrag()}
       onClickCapture={(event) => {
-        if (!suppressClick.current) return;
+        // Keyboard activation (detail 0) is never the end of a drag.
+        if (event.detail === 0) return;
+        const target = event.target as HTMLElement;
+        // The second click of a double-click selects a word; it must not toggle or reopen the row.
+        const wordClick = event.detail > 1 && !target.closest('.at-select, button, input, a');
+        if (!suppressClick.current && !wordClick) return;
         suppressClick.current = false;
         event.preventDefault();
         event.stopPropagation();
+      }}
+      onFocus={(event) => {
+        // A row focused by a click becomes the tab stop, as one focused by the arrow keys.
+        const row = event.target as HTMLElement;
+        if (row.classList.contains('at-row') && row.dataset.index !== undefined) setActiveIndex(Number(row.dataset.index));
       }}
       onContextMenu={onRowContextMenu}
     >
@@ -493,6 +634,7 @@ export const AlertTable = memo(function AlertTable({
               options: cellOptions,
               onCheck: selectable ? onCheck : undefined,
               onKeyDown: onRowKeyDown,
+              hasMenu: selectable && onContextMenu !== undefined,
             };
             const key = itemKey(item);
             if (item.kind === 'lane') {
@@ -549,13 +691,9 @@ export const AlertTable = memo(function AlertTable({
           })}
         </div>
       )}
-      {selectionBox && (
-        <div
-          aria-hidden="true"
-          data-selection-box=""
-          className="pointer-events-none fixed z-30 border border-accent bg-accent/20"
-          style={selectionBox}
-        />
+      {dragging && (
+        // Positioned in content coordinates by dragTick: it scrolls with its rows, under the sticky header.
+        <div ref={boxRef} aria-hidden="true" data-selection-box="" className="pointer-events-none absolute left-0 top-0 z-[2] size-0 border border-accent bg-accent/20" />
       )}
     </div>
   );
@@ -572,6 +710,8 @@ interface RowBaseProps {
   /** Present when the selection column is shown. */
   onCheck?: (index: number, range: boolean) => void;
   onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
+  /** The row opens the alert menu (right-click, Shift+F10, the ContextMenu key). */
+  hasMenu: boolean;
 }
 
 /** Clicks in the selection cell tick the box; they must not also open or toggle the row. */
@@ -608,13 +748,14 @@ function SelectCell({ index, checked, label, onCheck }: Readonly<{ index: number
   );
 }
 
-const Row = memo(function Row({ alert, child, alsoIn, index, top, height, selected, checked, tabbable, columns, options, critical, onSelect, onCheck, onKeyDown }: RowProps) {
+const Row = memo(function Row({ alert, child, alsoIn, index, top, height, selected, checked, tabbable, columns, options, critical, onSelect, onCheck, onKeyDown, hasMenu }: RowProps) {
   const name = alert.tinyId ? `#${alert.tinyId}` : alert.summary;
   return (
     <div
       role="row"
       aria-rowindex={index + 2}
       aria-selected={selected}
+      aria-haspopup={hasMenu ? 'menu' : undefined}
       data-index={index}
       data-critical={critical ? 'true' : undefined}
       data-closed={alert.status === 'closed' ? 'true' : undefined}
@@ -691,12 +832,13 @@ function GroupCellContent({
 }
 
 /** One row standing for a group of repeated alerts; click to expand. */
-const GroupRow = memo(function GroupRow({ itemKey: key, group, summary, expanded, checked, activityEnd, index, top, height, tabbable, columns, options, critical, onToggle, onCheck, onKeyDown }: GroupRowProps) {
+const GroupRow = memo(function GroupRow({ itemKey: key, group, summary, expanded, checked, activityEnd, index, top, height, tabbable, columns, options, critical, onToggle, onCheck, onKeyDown, hasMenu }: GroupRowProps) {
   return (
     <div
       role="row"
       aria-rowindex={index + 2}
       aria-expanded={expanded}
+      aria-haspopup={hasMenu ? 'menu' : undefined}
       data-index={index}
       data-group="true"
       data-critical={critical ? 'true' : undefined}

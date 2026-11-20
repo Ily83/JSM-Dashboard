@@ -2,6 +2,52 @@
 
 Newest release first. Each release lists what changed, how to install or update, and what is known not to work yet.
 
+## 0.3.2 (2026-11-20)
+
+Fixes from a design and accessibility review (impeccable audit and critique) of the context menu, drag-to-select, bulk actions and server-side History analysis added in 0.3.1's follow-ups (PRs #3 and #4).
+
+### Update
+
+```bash
+git pull
+npm ci
+```
+
+### Fixed
+
+- **Confirm button:** the bulk bar's Confirm (and the panel's Confirm close and Run) was unreadable: contrast 1:1 in light, 1.03:1 in dark. It is now 5.9:1 and 7.5:1.
+- **Bulk bar:** always present in one fixed slot, so the table no longer jumps 41 px (77 px on a phone) when the first alert is selected. Previously the menu then opened next to the wrong row and drag-select picked the wrong rows.
+- **Context menu:**
+  - It no longer has every action disabled after an action has finished.
+  - It follows the menu pattern for keyboard and screen readers: arrow keys, Home and End, Tab and Escape close it, and focus returns to the row. Shift+F10 and the menu key open it next to the row.
+  - It is grouped, uses the same icons as the bar and shows the A, U and C hints.
+  - It stays on screen when a picker loads or the window is resized.
+- **Fewer steps:** a single alert is acknowledged, assigned, snoozed, tagged and so on in one step. Several alerts are counted and confirmed first, and Close always asks, inside the menu.
+- **More actions (⋯):** a button in the bulk bar opens the same menu, so every bulk action is reachable without right-click, by touch too.
+- **Drag-to-select:**
+  - It starts from the checkbox column or a vertical drag, so text in rows can be selected and copied again.
+  - It updates once per frame.
+  - It stops if the mouse is released outside the window, and Esc cancels it.
+  - Clicking a row focuses it again.
+- **History:**
+  - Finished results stay when another analysis starts in another tab, with a short note and "Open it".
+  - Status polling stops once a job is done.
+  - The running state is one line with a progress bar.
+  - Explanations moved into an ⓘ tooltip.
+  - Dates are English and UTC throughout, and durations use one format.
+- **Light theme:** contrast fixed for the P2, P3 and P5 priority badges (also on checked and selected rows), the active sidebar count and the search placeholder.
+- **Phone width:**
+  - The sidebar collapses to icons below 768 px.
+  - The top bar and the filter bar no longer push the page sideways.
+  - Settings cards fit the screen.
+- **Sidebar counts:** the counts are hidden until alerts have been loaded, instead of showing 0.
+
+### Tested
+
+- 220 unit tests, typecheck and build.
+- 26 browser tests in demo mode (new ones cover the bar, menu keyboard use, focus return, More actions, text selection, drag cancel and the History tab case), and 4 live round-trip tests against a trial site.
+- impeccable's detector finds nothing in the changed files, and only advisory font and size-scale notes on the rendered pages, which are intended for a dense console. No page scrolls sideways at 390 px.
+
 ## 0.3.1 (2026-11-20)
 
 Code quality and a SonarQube setup. No new features; behaviour and appearance are unchanged apart from one crash fix.

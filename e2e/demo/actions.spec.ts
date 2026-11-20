@@ -109,12 +109,151 @@ test.describe('actions', () => {
     const fits = Number((await button.innerText()).replace(/\D/g, ''));
     test.skip(fits === 0, 'all selected alerts were already acknowledged');
     await button.click();
-    await bar.getByRole('button', { name: 'Confirm' }).click();
-    await expect(bar).toContainText(`${fits} acknowledged`);
+    // One alert is acknowledged at once; more than one asks first.
+    if (fits > 1) {
+      await expect(bar).toContainText(`Acknowledge ${fits} alerts?`);
+      await bar.getByRole('button', { name: 'Confirm' }).click();
+    }
+    await expect(bar).toContainText(`${fits} alert${fits === 1 ? '' : 's'} acknowledged`);
     if (fits < 6) await expect(bar).toContainText(`${6 - fits} skipped`);
+    // Focus stays on the button that started it.
+    await expect(button).toBeFocused();
   });
 
-  test('drag selects alerts and the context menu confirms bulk actions', async ({ page }) => {
+  test('the bar keeps the table in place, asks before a bulk close and Esc cancels', async ({ page }) => {
+    await page.goto('/#/active');
+    const grid = page.getByRole('grid', { name: 'Alerts' });
+    const bar = page.locator('[aria-label="Bulk actions"]');
+    const top = (await grid.boundingBox())!.y;
+    await rows(page).nth(0).locator('input').click();
+    await expect(bar).toContainText('1 selected');
+    expect((await grid.boundingBox())!.y).toBe(top);
+    await rows(page).nth(1).locator('input').click();
+    await bar.getByRole('button', { name: /^Close/ }).click();
+    await expect(bar).toContainText('Close 2 alerts?');
+    const confirm = bar.getByRole('button', { name: 'Confirm' });
+    await expect(confirm).toBeFocused();
+    await expect(confirm).toHaveAccessibleDescription('Close 2 alerts?');
+    await page.keyboard.press('Escape');
+    await expect(bar).not.toContainText('Close 2 alerts?');
+    await expect(bar.getByRole('button', { name: /^Close/ })).toBeFocused();
+    expect((await grid.boundingBox())!.y).toBe(top);
+  });
+
+  test('More actions opens the alert menu from the bar', async ({ page }) => {
+    await page.goto('/#/active');
+    const bar = page.locator('[aria-label="Bulk actions"]');
+    const more = bar.getByRole('button', { name: 'More actions' });
+    await rows(page).nth(0).locator('input').click();
+    await rows(page).nth(1).locator('input').click();
+    await more.click();
+    const menu = page.getByRole('menu', { name: 'Alert actions' });
+    await expect(menu).toContainText('2 selected');
+    await expect(more).toHaveAttribute('aria-expanded', 'true');
+    const box = (await page.locator('[data-context-menu]').boundingBox())!;
+    const button = (await more.boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(button.y + button.height - 1);
+    await expect(menu.getByRole('menuitem', { name: /^Snooze…/ })).toBeEnabled();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(more).toBeFocused();
+    // Pressing the button again closes the menu it opened.
+    await more.click();
+    await expect(menu).toBeVisible();
+    await more.click();
+    await expect(menu).toHaveCount(0);
+  });
+
+  test('keyboard opens the alert menu against the row and returns focus to it', async ({ page }) => {
+    await page.goto('/#/active');
+    let writes = 0;
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && request.url().includes('/actions')) writes += 1;
+    });
+    const row = rows(page).nth(2);
+    await expect(row).toHaveAttribute('aria-haspopup', 'menu');
+    await row.focus();
+    await page.keyboard.press('Shift+F10');
+    const menu = page.getByRole('menu', { name: 'Alert actions' });
+    const items = menu.getByRole('menuitem');
+    await expect(items.first()).toBeFocused();
+    const rowBox = (await row.boundingBox())!;
+    const menuBox = (await page.locator('[data-context-menu]').boundingBox())!;
+    expect(menuBox.y >= rowBox.y + rowBox.height - 1 || menuBox.y + menuBox.height <= rowBox.y + 1).toBe(true);
+    await page.keyboard.press('ArrowDown');
+    await expect(items.nth(1)).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(items.last()).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(items.first()).toBeFocused();
+    await page.keyboard.press('ArrowUp');
+    await expect(items.last()).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(items.first()).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(row).toBeFocused();
+
+    await page.keyboard.press('ContextMenu');
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('Tab');
+    await expect(menu).toHaveCount(0);
+    await expect(row).toBeFocused();
+
+    // Close asks in the menu; Esc cancels the question, a second Esc closes the menu.
+    await page.keyboard.press('Shift+F10');
+    await page.keyboard.press('c');
+    const question = page.locator('[data-context-menu]').getByRole('dialog');
+    await expect(question).toContainText('Close 1 alert?');
+    await expect(question.getByRole('button', { name: 'Close' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu.getByRole('menuitem', { name: /^Close/ })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(row).toBeFocused();
+
+    // A picker focuses its first control.
+    await page.keyboard.press('Shift+F10');
+    await menu.getByRole('menuitem', { name: 'Add tags…' }).click();
+    await expect(page.locator('[data-context-menu]').getByRole('textbox', { name: 'Tags' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu.getByRole('menuitem', { name: 'Add tags…' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(row).toBeFocused();
+    expect(writes).toBe(0);
+  });
+
+  test('a sideways drag in a row selects text; Esc cancels a rectangle drag', async ({ page }) => {
+    await page.goto('/#/active');
+    const row = rows(page).nth(1);
+    const box = (await row.boundingBox())!;
+    const summary = (await row.locator('[role="gridcell"]').nth(2).boundingBox())!;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(summary.x + 6, y);
+    await page.mouse.down();
+    await page.mouse.move(summary.x + 160, y + 1, { steps: 6 });
+    await page.mouse.up();
+    expect((await page.evaluate(() => globalThis.getSelection()?.toString() ?? '')).length).toBeGreaterThan(3);
+    await expect(page.locator('.at-row[data-checked]')).toHaveCount(0);
+    await expect(panel(page)).toHaveCount(0);
+    await expect(page.locator('[data-selection-box]')).toHaveCount(0);
+
+    await rows(page).nth(0).locator('input').click();
+    const third = (await rows(page).nth(2).boundingBox())!;
+    const seventh = (await rows(page).nth(6).boundingBox())!;
+    await page.mouse.move(third.x + 120, third.y + third.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(third.x + 140, seventh.y + seventh.height / 2, { steps: 5 });
+    await expect(page.locator('[data-selection-box]')).toBeVisible();
+    await expect.poll(async () => page.locator('.at-row[data-checked]').count()).toBeGreaterThan(3);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-selection-box]')).toHaveCount(0);
+    await page.mouse.up();
+    await expect(page.locator('.at-row[data-checked]')).toHaveCount(1);
+    await expect(rows(page).nth(0)).toHaveAttribute('data-checked', 'true');
+    await expect(panel(page)).toHaveCount(0);
+  });
+
+  test('drag selects alerts; the context menu asks before bulk actions and acts on one alert at once', async ({ page }) => {
     await page.goto('/#/active');
     await page.getByRole('radio', { name: /^Unacknowledged/ }).click();
     const first = rows(page).nth(0);
@@ -140,117 +279,117 @@ test.describe('actions', () => {
     await expect(panel(page)).toHaveCount(0);
 
     await page.locator('.at-row[data-checked]').first().click({ button: 'right' });
-    const menu = page.getByRole('dialog', { name: 'Alert actions' });
+    const popup = page.locator('[data-context-menu]');
+    const menu = page.getByRole('menu', { name: 'Alert actions' });
     await expect(menu).toContainText(`${selected} selected`);
-    await menu.getByRole('button', { name: /^Acknowledge/ }).click();
-    await expect(bar).toContainText(`Acknowledge ${selected} alerts?`);
+    await menu.getByRole('menuitem', { name: /^Acknowledge/ }).click();
+    // The question is asked in the menu, at the pointer.
+    await expect(popup).toContainText(`Acknowledge ${selected} alerts?`);
     expect(writes).toBe(0);
-    await bar.getByRole('button', { name: 'Cancel' }).click();
+    await popup.getByRole('button', { name: 'Cancel' }).click();
+    await expect(menu.getByRole('menuitem', { name: /^Acknowledge/ })).toBeFocused();
 
     await rows(page).nth(8).click({ button: 'right' });
     await expect(menu).toContainText('1 selected');
     await expect(bar).toContainText('1 selected');
-    await menu.getByRole('button', { name: /^Acknowledge/ }).click();
-    expect(writes).toBe(0);
-    await bar.getByRole('button', { name: 'Confirm' }).click();
-    await expect(bar).toContainText('1 acknowledged');
+    await menu.getByRole('menuitem', { name: /^Acknowledge/ }).click();
+    // One alert: acknowledged at once.
+    await expect(bar).toContainText('1 alert acknowledged');
     expect(writes).toBe(1);
-    await bar.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(popup).toHaveCount(0);
 
+    // The next menu works without dismissing the outcome first.
     await rows(page).first().click({ button: 'right' });
-    await menu.getByRole('button', { name: 'Open alert details' }).click();
+    await expect(menu.getByRole('menuitem', { name: /^Acknowledge/ })).toBeEnabled();
+    await menu.getByRole('menuitem', { name: 'Open alert details' }).click();
     await expect(panel(page)).toBeVisible();
+    await expect(rows(page).first()).toBeFocused();
     expect(writes).toBe(1);
   });
 
-  test('context menu assigns to me or another person only after confirmation', async ({ page }) => {
+  test('context menu assigns one alert at once and asks before assigning several', async ({ page }) => {
     await page.goto('/#/active');
     const writes: Array<{ action: string; accountId?: string }> = [];
     page.on('request', (request) => {
       if (request.method() === 'POST' && request.url().includes('/actions')) writes.push(request.postDataJSON());
     });
-    const menu = page.getByRole('dialog', { name: 'Alert actions' });
+    const menu = page.locator('[data-context-menu]');
     const bar = page.locator('[aria-label="Bulk actions"]');
 
     await rows(page).first().click({ button: 'right' });
-    await menu.getByRole('button', { name: 'Assign…' }).click();
+    await menu.getByRole('menuitem', { name: 'Assign…' }).click();
     await menu.getByRole('button', { name: /Assign to me/ }).click();
-    await expect(bar).toContainText('Assign 1 alert to Demo Operator?');
-    expect(writes).toHaveLength(0);
-    await bar.getByRole('button', { name: 'Confirm' }).click();
-    await expect(bar).toContainText('1 assigned');
+    await expect(bar).toContainText('1 alert assigned to Demo Operator');
     expect(writes).toEqual([{ action: 'assign', accountId: 'demo-user-operator' }]);
-    await bar.getByRole('button', { name: 'Dismiss' }).click();
 
     await rows(page).nth(0).locator('input').click();
     await rows(page).nth(1).locator('input').click();
     await rows(page).first().click({ button: 'right' });
-    await menu.getByRole('button', { name: 'Assign…' }).click();
+    await menu.getByRole('menuitem', { name: /^Assign…/ }).click();
     await menu.getByRole('textbox', { name: 'Search people' }).fill('Priya');
     await menu.getByRole('button', { name: 'Priya Nair' }).click();
-    await expect(bar).toContainText('Assign 2 alerts to Priya Nair?');
+    await expect(menu).toContainText('Assign 2 alerts to Priya Nair?');
     expect(writes).toHaveLength(1);
-    await bar.getByRole('button', { name: 'Confirm' }).click();
-    await expect(bar).toContainText('2 assigned');
+    await menu.getByRole('button', { name: 'Assign', exact: true }).click();
+    await expect(bar).toContainText('2 alerts assigned to Priya Nair');
     expect(writes.slice(1)).toEqual([
       { action: 'assign', accountId: 'demo-user-priya' },
       { action: 'assign', accountId: 'demo-user-priya' },
     ]);
   });
 
-  test('context menu runs enabled picker actions after confirmation', async ({ page }) => {
+  test('context menu runs picker actions on one alert at once', async ({ page }) => {
     await page.goto('/#/active');
     const writes: Array<Record<string, unknown>> = [];
     page.on('request', (request) => {
       if (request.method() === 'POST' && request.url().includes('/actions')) writes.push(request.postDataJSON());
     });
-    const menu = page.getByRole('dialog', { name: 'Alert actions' });
-    const bar = page.locator('[aria-label="Bulk actions"]');
+    const menu = page.locator('[data-context-menu]');
+    const status = page.locator('[aria-label="Bulk actions"]').getByRole('status');
     const open = async (label: string) => {
       await rows(page).first().click({ button: 'right' });
-      await menu.getByRole('button', { name: label, exact: true }).click();
+      await menu.getByRole('menuitem', { name: label, exact: true }).click();
     };
-    const confirm = async (count: number, preview: string) => {
-      await expect(bar).toContainText(preview);
+    const done = async (count: number, outcome: string) => {
+      await expect(status).toContainText(outcome);
+      await expect(menu).toHaveCount(0);
       expect(writes).toHaveLength(count);
-      await bar.getByRole('button', { name: 'Confirm' }).click();
-      await expect(bar.getByRole('button', { name: 'Dismiss' })).toBeVisible();
-      await expect(bar).not.toContainText('failed');
-      expect(writes).toHaveLength(count + 1);
-      await bar.getByRole('button', { name: 'Dismiss' }).click();
+      await expect(status).not.toContainText('failed');
     };
 
     await open('Change priority…');
     await menu.getByRole('button', { name: 'Priority P4' }).click();
-    await confirm(0, 'to P4');
+    await done(1, '1 alert set to P4');
     expect(writes[0]).toEqual({ action: 'priority', priority: 'P4' });
 
     await open('Snooze…');
     await menu.getByRole('button', { name: '1 h' }).click();
-    await confirm(1, 'Snooze 1 alert until');
+    await done(2, '1 alert snoozed until');
     expect(writes[1]).toMatchObject({ action: 'snooze' });
 
+    // Tags take one line: Enter adds them.
     await open('Add tags…');
     await menu.getByRole('textbox', { name: 'Tags' }).fill('menu-test, ops');
-    await menu.getByRole('button', { name: 'Continue' }).click();
-    await confirm(2, 'menu-test, ops');
+    await menu.getByRole('textbox', { name: 'Tags' }).press('Enter');
+    await done(3, '1 alert tagged menu-test, ops');
     expect(writes[2]).toEqual({ action: 'addTags', tags: ['menu-test', 'ops'] });
 
     await open('Remove tags…');
     await menu.getByRole('textbox', { name: 'Tags' }).fill('menu-test');
-    await menu.getByRole('button', { name: 'Continue' }).click();
-    await confirm(3, 'menu-test');
+    await menu.getByRole('textbox', { name: 'Tags' }).press('Enter');
+    await done(4, 'Tag menu-test removed from 1 alert');
     expect(writes[3]).toEqual({ action: 'removeTags', tags: ['menu-test'] });
 
+    // A note may take several lines: Ctrl+Enter adds it.
     await open('Add note…');
     await menu.getByRole('textbox', { name: 'Note' }).fill('Investigating from the menu');
-    await menu.getByRole('button', { name: 'Continue' }).click();
-    await confirm(4, 'Investigating from the menu');
+    await menu.getByRole('textbox', { name: 'Note' }).press('Control+Enter');
+    await done(5, 'Note added to 1 alert');
     expect(writes[4]).toEqual({ action: 'addNote', note: 'Investigating from the menu' });
 
     await open('Add responder…');
     await menu.getByRole('button', { name: 'Database Team' }).click();
-    await confirm(5, 'Database Team');
+    await done(6, 'Database Team added to 1 alert');
     expect(writes[5]).toEqual({ action: 'addResponder', responder: { type: 'team', id: 'team-dba' } });
 
     await open('Escalate to next…');
@@ -258,7 +397,7 @@ test.describe('actions', () => {
     await expect(escalation).toBeVisible();
     const escalationName = await escalation.innerText();
     await escalation.click();
-    await confirm(6, escalationName);
+    await done(7, `1 alert escalated via ${escalationName}`);
     expect(writes[6]).toMatchObject({ action: 'escalate' });
   });
 
@@ -276,18 +415,18 @@ test.describe('actions', () => {
     await rows(page).nth(0).locator('input').click();
     await rows(page).nth(1).locator('input').click();
     await rows(page).first().click({ button: 'right' });
-    const menu = page.getByRole('dialog', { name: 'Alert actions' });
-    await expect(menu.getByRole('button', { name: 'Add note…' })).toBeEnabled();
-    await expect(menu.getByRole('button', { name: 'Assign…' })).toBeDisabled();
-    await expect(menu.getByRole('button', { name: 'Run action…' })).toBeDisabled();
-    await menu.getByRole('button', { name: 'Add note…' }).click();
+    const menu = page.locator('[data-context-menu]');
+    await expect(menu.getByRole('menuitem', { name: /^Add note…/ })).toBeEnabled();
+    await expect(menu.getByRole('menuitem', { name: /^Assign…/ })).toBeDisabled();
+    await expect(menu.getByRole('menuitem', { name: /^Run action…/ })).toBeDisabled();
+    await menu.getByRole('menuitem', { name: /^Add note…/ }).click();
     await menu.getByRole('textbox', { name: 'Note' }).fill('Bulk handover');
-    await menu.getByRole('button', { name: 'Continue' }).click();
+    await menu.getByRole('button', { name: 'Add note' }).click();
     const bar = page.locator('[aria-label="Bulk actions"]');
-    await expect(bar).toContainText('Add note 2 alerts');
+    await expect(menu).toContainText('Add note to 2 alerts?');
     expect(writes).toHaveLength(0);
-    await bar.getByRole('button', { name: 'Confirm' }).click();
-    await expect(bar).toContainText('2 updated');
+    await menu.getByRole('button', { name: 'Add note' }).click();
+    await expect(bar).toContainText('Note added to 2 alerts');
     expect(writes).toEqual([
       { action: 'addNote', note: 'Bulk handover' },
       { action: 'addNote', note: 'Bulk handover' },
@@ -305,13 +444,14 @@ test.describe('actions', () => {
     await page.getByRole('searchbox', { name: 'Search alerts' }).fill(`"${target.id}"`);
     await expect(rows(page).first()).toContainText(target.summary);
     await rows(page).first().click({ button: 'right' });
-    const menu = page.getByRole('dialog', { name: 'Alert actions' });
-    await menu.getByRole('button', { name: 'Run action…' }).click();
+    const menu = page.locator('[data-context-menu]');
+    await menu.getByRole('menuitem', { name: 'Run action…' }).click();
     await menu.getByRole('button', { name: target.actions[0], exact: true }).click();
+    // A custom action can do anything: it always asks, even for one alert.
+    await expect(menu).toContainText(`Run “${target.actions[0]}” on 1 alert?`);
+    await menu.getByRole('button', { name: 'Run', exact: true }).click();
     const bar = page.locator('[aria-label="Bulk actions"]');
-    await expect(bar).toContainText(target.actions[0]);
-    await bar.getByRole('button', { name: 'Confirm' }).click();
-    await expect(bar).toContainText('1 updated');
+    await expect(bar).toContainText(`“${target.actions[0]}” run on 1 alert`);
   });
 
   test('rectangle selection adds with Control and scrolls at the table edge', async ({ page }) => {
@@ -348,14 +488,15 @@ test.describe('actions', () => {
     });
     await page.goto('/#/active');
     await rows(page).first().click({ button: 'right' });
-    const menu = page.getByRole('dialog', { name: 'Alert actions' });
+    const menu = page.getByRole('menu', { name: 'Alert actions' });
     await expect(menu).toContainText('Disabled actions must be enabled in the backend');
-    await expect(menu.getByRole('button', { name: /^Acknowledge/ })).toBeDisabled();
-    await expect(menu.getByRole('button', { name: 'Assign…' })).toBeDisabled();
-    await expect(menu.getByRole('button', { name: 'Snooze…' })).toBeDisabled();
-    await expect(menu.getByRole('button', { name: 'Add note…' })).toBeDisabled();
+    await expect(menu.getByRole('menuitem', { name: /^Acknowledge/ })).toBeDisabled();
+    await expect(menu.getByRole('menuitem', { name: 'Assign…' })).toBeDisabled();
+    await expect(menu.getByRole('menuitem', { name: 'Snooze…' })).toBeDisabled();
+    await expect(menu.getByRole('menuitem', { name: 'Add note…' })).toBeDisabled();
     await page.keyboard.press('Escape');
     await expect(menu).toHaveCount(0);
+    await expect(rows(page).first()).toBeFocused();
     await expect(page.locator('[aria-label="Bulk actions"]')).toContainText('1 selected');
     await rows(page).first().click();
     await expect(panel(page)).toBeVisible();
@@ -370,7 +511,7 @@ test.describe('actions', () => {
     const count = Number(label?.match(/Select (\d+) alerts/)?.[1]);
     expect(count).toBeGreaterThan(1);
     await group.click({ button: 'right' });
-    await expect(page.getByRole('dialog', { name: 'Alert actions' })).toContainText(`${count} selected`);
+    await expect(page.getByRole('menu', { name: 'Alert actions' })).toContainText(`${count} selected`);
     await expect(page.locator('[aria-label="Bulk actions"]')).toContainText(`${count} selected`);
   });
 

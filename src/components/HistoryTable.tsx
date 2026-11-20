@@ -1,7 +1,6 @@
 import type { Alert } from '../../shared/types';
+import { formatUtcDayTime } from '../lib/historyAnalysis';
 import { PriorityBadge, StatusBadge } from './ui/badges';
-
-const created = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' });
 
 export function HistoryTable({ alerts }: Readonly<{ alerts: Alert[] }>) {
   return (
@@ -20,7 +19,7 @@ export function HistoryTable({ alerts }: Readonly<{ alerts: Alert[] }>) {
         <tbody>
           {alerts.map((alert) => (
             <tr key={alert.id} className="border-t border-line">
-              <td className="whitespace-nowrap px-3 py-2 text-xs tabular-nums">{created.format(alert.createdAt)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-xs tabular-nums">{formatUtcDayTime(alert.createdAt)}</td>
               <td className="px-3 py-2"><PriorityBadge priority={alert.priority} /></td>
               <td className="px-3 py-2"><StatusBadge status={alert.status} /></td>
               <td className="px-3 py-2 text-xs text-muted">{alert.customers.join(', ') || '—'}</td>

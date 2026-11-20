@@ -14,7 +14,8 @@
   --line-strong: #c3cbd8;
   --fg: #141a24;
   --fg-muted: #465063;
-  --fg-subtle: #677286;
+  /* ≥ 4.5:1 on --bg, --hover and --accent-soft: placeholders, counts of the active nav item. */
+  --fg-subtle: #5e687a;
   --accent: #1a5fd0;
   --accent-soft: #e4eefd;
   --on-accent: #ffffff;
@@ -27,11 +28,15 @@
   --ok-soft: #e3f5ec;
   --info: #1a5fd0;
   --violet: #6d3fc4;
+  /*
+   * Priority text stays ≥ 4.5:1 on every row: plain, hovered, checked and
+   * selected. P2 also on its own 18% tint (badges.tsx), hence the deeper orange.
+   */
   --p1: #c21d1d;
-  --p2: #c2540a;
-  --p3: #8a6a00;
+  --p2: #944008;
+  --p3: #856600;
   --p4: #1a5fd0;
-  --p5: #677286;
+  --p5: #5e687a;
   --shadow: 0 8px 24px rgb(15 23 42 / 0.14);
   --badge-l-bg: 92%;
   --badge-l-fg: 26%;
@@ -124,6 +129,10 @@
   }
   button:disabled {
     cursor: not-allowed;
+  }
+  /* No single word left alone on the last line of a paragraph. */
+  p {
+    text-wrap: pretty;
   }
   :focus-visible {
     outline: 2px solid var(--accent);

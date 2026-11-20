@@ -96,7 +96,10 @@ export function responseBreakdown(alerts: readonly Alert[], dimension: ResponseD
   return rows.sort((a, b) => b.alerts.length - a.alerts.length || a.label.localeCompare(b.label));
 }
 
-/** "45s", "12m", "3h 05m", "2d 4h". */
+/**
+ * "45s", "12m", "3h 05m", "1d 20h": the largest unit and the next one, with
+ * days from 24 hours on, like the Age column of the live table.
+ */
 export function formatDuration(ms: number | null): string {
   if (ms === null) return '–';
   const s = Math.round(ms / 1000);
@@ -104,6 +107,6 @@ export function formatDuration(ms: number | null): string {
   const m = Math.round(s / 60);
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h ${String(m % 60).padStart(2, '0')}m`;
+  if (h < 24) return `${h}h ${String(m % 60).padStart(2, '0')}m`;
   return `${Math.floor(h / 24)}d ${h % 24}h`;
 }

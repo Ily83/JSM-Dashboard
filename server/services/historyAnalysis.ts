@@ -9,6 +9,13 @@ type Job = { status: HistoryAnalysisStatus; months: HistoryMonth[] };
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** Calendar months touched by the inclusive UTC range: one per scanned window of `run`. */
+function monthCount(from: number, to: number): number {
+  const start = new Date(from);
+  const end = new Date(to);
+  return (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + end.getUTCMonth() - start.getUTCMonth() + 1;
+}
+
 /** One server-local analysis, retained in memory until another is started or the server restarts. */
 export class HistoryAnalysisService {
   private job: Job | null = null;
@@ -31,7 +38,10 @@ export class HistoryAnalysisService {
     }
     if (this.job?.status.state === 'completed' && this.job.status.from === fromDate && this.job.status.to === toDate) return this.status();
     const job: Job = {
-      status: { id: randomUUID(), from: fromDate, to: toDate, state: 'running', pages: 0, recordsRead: 0, partial: false, message: null },
+      status: {
+        id: randomUUID(), from: fromDate, to: toDate, state: 'running', pages: 0, recordsRead: 0,
+        monthsDone: 0, monthsTotal: monthCount(from, to), partial: false, message: null,
+      },
       months: [],
     };
     this.job = job;
@@ -109,6 +119,7 @@ export class HistoryAnalysisService {
         if (!this.active(job)) return;
         job.months.push({ key: utcDate(start).slice(0, 7), from: utcDate(start), to: utcDate(until - DAY_MS), alerts: [...alerts.values()], partial });
         job.status.partial ||= partial;
+        job.status.monthsDone = job.months.length;
         start = next;
       }
       if (this.active(job)) job.status.state = 'completed';

@@ -77,7 +77,8 @@ function SyncStatus(props: Readonly<SyncProps>) {
       data-tip-always=""
     >
       <Icon size={14} aria-hidden className={cn('flex-none', className)} />
-      {syncText(props, failed, last, now)}
+      {/* On a phone the icon carries the state; the text stays for screen readers. */}
+      <span className="max-sm:sr-only">{syncText(props, failed, last, now)}</span>
     </output>
   );
 }
@@ -95,7 +96,7 @@ export function TopBar(props: Readonly<TopBarProps>) {
     : [...REFRESH_OPTIONS, refreshSeconds].sort((a, b) => a - b);
 
   return (
-    <header className="flex h-11 flex-none items-center gap-3 border-b border-line bg-panel px-3">
+    <header className="flex h-11 flex-none items-center gap-2 border-b border-line bg-panel px-3 sm:gap-3">
       <h1 className="flex min-w-0 items-baseline gap-2 text-sm font-semibold">
         <span className="truncate max-md:hidden">Jira Operations – Alert Center</span>
         <span className="text-subtle max-md:hidden" aria-hidden>
@@ -111,7 +112,7 @@ export function TopBar(props: Readonly<TopBarProps>) {
           data-tip-always=""
         >
           <FlaskConical size={12} aria-hidden />
-          Demo mode
+          <span className="max-sm:sr-only">Demo mode</span>
         </span>
       )}
 
@@ -122,7 +123,7 @@ export function TopBar(props: Readonly<TopBarProps>) {
         {props.showLiveControls !== false && (
           <>
             <SyncStatus meta={props.meta} isFetching={isFetching} requestError={props.requestError} />
-            <label className="flex items-center">
+            <label className="flex items-center max-sm:hidden">
               <span className="sr-only">Auto-refresh interval</span>
               <select
                 value={refreshSeconds}
@@ -146,7 +147,7 @@ export function TopBar(props: Readonly<TopBarProps>) {
 
         {dashboard && (
           <>
-            <span className="mx-0.5 h-5 w-px bg-line" aria-hidden />
+            <span className="mx-0.5 h-5 w-px bg-line max-sm:hidden" aria-hidden />
             <button
               type="button"
               onClick={dashboard.onToggleCollapsed}
@@ -165,7 +166,7 @@ export function TopBar(props: Readonly<TopBarProps>) {
               aria-label="Customize dashboard"
               data-tip="Customize dashboard"
               data-tip-always=""
-              className={iconButton(dashboard.editing)}
+              className={cn(iconButton(dashboard.editing), 'max-sm:hidden')}
             >
               <LayoutGrid size={15} aria-hidden />
             </button>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, FolderOpen, Pencil, Save, Trash2 } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { formatUtcRange } from '../lib/historyAnalysis';
 import { useStore } from '../lib/store';
 import {
   deleteInvestigation,
@@ -99,9 +100,9 @@ export function HistoryInvestigationsMenu({ current, activeId, onOpen, onActiveC
                       className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-2 text-left"
                     >
                       <Check size={13} aria-hidden className={cn('flex-none text-accent', item.id !== activeId && 'invisible')} />
-                      <span className="min-w-0 flex-1 truncate">{item.name}</span>
-                      <span className="flex-none text-[11px] tabular-nums text-subtle">
-                        {item.from.slice(2)} – {item.to.slice(2)}
+                      <span className="grid min-w-0 flex-1">
+                        <span className="truncate">{item.name}</span>
+                        <span className="truncate text-[11px] tabular-nums text-subtle">{formatUtcRange(item.from, item.to)}</span>
                       </span>
                     </button>
                     <button

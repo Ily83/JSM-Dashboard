@@ -141,6 +141,7 @@ export function App() {
   }, [route.section, route.page]);
   const checkedAlerts = useMemo(() => (checked.size === 0 ? NO_ALERTS : visible.filter((a) => checked.has(a.id))), [visible, checked]);
   const clearChecked = useCallback(() => setChecked(new Set()), []);
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   const selectedAlert = useMemo(
     () => (route.alertId ? (loadedAlerts.find((a) => a.id === route.alertId) ?? null) : null),
@@ -212,6 +213,7 @@ export function App() {
       <Sidebar
         route={route}
         counts={sectionCounts}
+        countsKnown={alertsQuery.data !== undefined}
         collapsed={prefs.sidebarCollapsed}
         onToggle={() => patchPrefs({ sidebarCollapsed: !prefs.sidebarCollapsed })}
         views={views.saved}
@@ -336,7 +338,8 @@ export function App() {
                   allowed={writeActions}
                   onClear={clearChecked}
                   contextMenu={contextMenu}
-                  onCloseMenu={() => setContextMenu(null)}
+                  onOpenMenu={setContextMenu}
+                  onCloseMenu={closeContextMenu}
                   onOpenAlert={selectAlert}
                 />
                 <AlertTable

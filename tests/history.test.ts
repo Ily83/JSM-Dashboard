@@ -37,7 +37,9 @@ describe('history dates', () => {
       });
       const service = new HistoryAnalysisService(fetchPage, 0);
       const job = service.start(Date.UTC(2026, 0, 15), Date.UTC(2026, 1, 10))!;
+      expect(job).toMatchObject({ monthsDone: 0, monthsTotal: 2 });
       await vi.waitFor(() => expect(service.status()?.state).toBe('completed'));
+      expect(service.status()).toMatchObject({ monthsDone: 2, monthsTotal: 2 });
       const months = service.results(job.id)!;
       expect(fetchPage).toHaveBeenCalledTimes(8);
       expect(fetchPage.mock.calls.every(([page]) => page.background === true)).toBe(true);
@@ -45,6 +47,13 @@ describe('history dates', () => {
       expect(filterHistoryMonths(months, 'Contoso', 'prod').map((m) => m.alerts.map((a) => a.id))).toEqual([['alert-0'], []]);
       expect(filterHistoryMonths(months, 'Other', 'prod').map((m) => m.alerts.length)).toEqual([0, 0]);
       expect(months.every((m) => !m.partial)).toBe(true);
+    });
+
+    it('counts the calendar months of the range for the progress bar', async () => {
+      const service = new HistoryAnalysisService(async () => ({ alerts: [], hasNext: false, truncated: false, skipped: 0 }), 0);
+      expect(service.start(Date.UTC(2025, 10, 20), Date.UTC(2026, 10, 20))?.monthsTotal).toBe(13);
+      await vi.waitFor(() => expect(service.status()).toMatchObject({ state: 'completed', monthsDone: 13 }));
+      expect(service.start(Date.UTC(2026, 1, 3), Date.UTC(2026, 1, 3))?.monthsTotal).toBe(1);
     });
 
     it('splits dense windows and marks an unsplittable timestamp as partial', async () => {
