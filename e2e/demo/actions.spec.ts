@@ -163,6 +163,157 @@ test.describe('actions', () => {
     expect(writes).toBe(1);
   });
 
+  test('context menu assigns to me or another person only after confirmation', async ({ page }) => {
+    await page.goto('/#/active');
+    const writes: Array<{ action: string; accountId?: string }> = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && request.url().includes('/actions')) writes.push(request.postDataJSON());
+    });
+    const menu = page.getByRole('dialog', { name: 'Alert actions' });
+    const bar = page.locator('[aria-label="Bulk actions"]');
+
+    await rows(page).first().click({ button: 'right' });
+    await menu.getByRole('button', { name: 'Assign…' }).click();
+    await menu.getByRole('button', { name: /Assign to me/ }).click();
+    await expect(bar).toContainText('Assign 1 alert to Demo Operator?');
+    expect(writes).toHaveLength(0);
+    await bar.getByRole('button', { name: 'Confirm' }).click();
+    await expect(bar).toContainText('1 assigned');
+    expect(writes).toEqual([{ action: 'assign', accountId: 'demo-user-operator' }]);
+    await bar.getByRole('button', { name: 'Dismiss' }).click();
+
+    await rows(page).nth(0).locator('input').click();
+    await rows(page).nth(1).locator('input').click();
+    await rows(page).first().click({ button: 'right' });
+    await menu.getByRole('button', { name: 'Assign…' }).click();
+    await menu.getByRole('textbox', { name: 'Search people' }).fill('Priya');
+    await menu.getByRole('button', { name: 'Priya Nair' }).click();
+    await expect(bar).toContainText('Assign 2 alerts to Priya Nair?');
+    expect(writes).toHaveLength(1);
+    await bar.getByRole('button', { name: 'Confirm' }).click();
+    await expect(bar).toContainText('2 assigned');
+    expect(writes.slice(1)).toEqual([
+      { action: 'assign', accountId: 'demo-user-priya' },
+      { action: 'assign', accountId: 'demo-user-priya' },
+    ]);
+  });
+
+  test('context menu runs enabled picker actions after confirmation', async ({ page }) => {
+    await page.goto('/#/active');
+    const writes: Array<Record<string, unknown>> = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && request.url().includes('/actions')) writes.push(request.postDataJSON());
+    });
+    const menu = page.getByRole('dialog', { name: 'Alert actions' });
+    const bar = page.locator('[aria-label="Bulk actions"]');
+    const open = async (label: string) => {
+      await rows(page).first().click({ button: 'right' });
+      await menu.getByRole('button', { name: label, exact: true }).click();
+    };
+    const confirm = async (count: number, preview: string) => {
+      await expect(bar).toContainText(preview);
+      expect(writes).toHaveLength(count);
+      await bar.getByRole('button', { name: 'Confirm' }).click();
+      await expect(bar.getByRole('button', { name: 'Dismiss' })).toBeVisible();
+      await expect(bar).not.toContainText('failed');
+      expect(writes).toHaveLength(count + 1);
+      await bar.getByRole('button', { name: 'Dismiss' }).click();
+    };
+
+    await open('Change priority…');
+    await menu.getByRole('button', { name: 'Priority P4' }).click();
+    await confirm(0, 'to P4');
+    expect(writes[0]).toEqual({ action: 'priority', priority: 'P4' });
+
+    await open('Snooze…');
+    await menu.getByRole('button', { name: '1 h' }).click();
+    await confirm(1, 'Snooze 1 alert until');
+    expect(writes[1]).toMatchObject({ action: 'snooze' });
+
+    await open('Add tags…');
+    await menu.getByRole('textbox', { name: 'Tags' }).fill('menu-test, ops');
+    await menu.getByRole('button', { name: 'Continue' }).click();
+    await confirm(2, 'menu-test, ops');
+    expect(writes[2]).toEqual({ action: 'addTags', tags: ['menu-test', 'ops'] });
+
+    await open('Remove tags…');
+    await menu.getByRole('textbox', { name: 'Tags' }).fill('menu-test');
+    await menu.getByRole('button', { name: 'Continue' }).click();
+    await confirm(3, 'menu-test');
+    expect(writes[3]).toEqual({ action: 'removeTags', tags: ['menu-test'] });
+
+    await open('Add note…');
+    await menu.getByRole('textbox', { name: 'Note' }).fill('Investigating from the menu');
+    await menu.getByRole('button', { name: 'Continue' }).click();
+    await confirm(4, 'Investigating from the menu');
+    expect(writes[4]).toEqual({ action: 'addNote', note: 'Investigating from the menu' });
+
+    await open('Add responder…');
+    await menu.getByRole('button', { name: 'Database Team' }).click();
+    await confirm(5, 'Database Team');
+    expect(writes[5]).toEqual({ action: 'addResponder', responder: { type: 'team', id: 'team-dba' } });
+
+    await open('Escalate to next…');
+    const escalation = menu.locator('ul button').first();
+    await expect(escalation).toBeVisible();
+    const escalationName = await escalation.innerText();
+    await escalation.click();
+    await confirm(6, escalationName);
+    expect(writes[6]).toMatchObject({ action: 'escalate' });
+  });
+
+  test('context menu applies a note to multiple alerts and respects individual permissions', async ({ page }) => {
+    await page.route('**/api/status', async (route) => {
+      const response = await route.fetch();
+      const status = await response.json();
+      await route.fulfill({ response, json: { ...status, readOnly: false, writes: { enabled: true, actions: ['addNote'] } } });
+    });
+    await page.goto('/#/active');
+    const writes: Array<Record<string, unknown>> = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && request.url().includes('/actions')) writes.push(request.postDataJSON());
+    });
+    await rows(page).nth(0).locator('input').click();
+    await rows(page).nth(1).locator('input').click();
+    await rows(page).first().click({ button: 'right' });
+    const menu = page.getByRole('dialog', { name: 'Alert actions' });
+    await expect(menu.getByRole('button', { name: 'Add note…' })).toBeEnabled();
+    await expect(menu.getByRole('button', { name: 'Assign…' })).toBeDisabled();
+    await expect(menu.getByRole('button', { name: 'Run action…' })).toBeDisabled();
+    await menu.getByRole('button', { name: 'Add note…' }).click();
+    await menu.getByRole('textbox', { name: 'Note' }).fill('Bulk handover');
+    await menu.getByRole('button', { name: 'Continue' }).click();
+    const bar = page.locator('[aria-label="Bulk actions"]');
+    await expect(bar).toContainText('Add note 2 alerts');
+    expect(writes).toHaveLength(0);
+    await bar.getByRole('button', { name: 'Confirm' }).click();
+    await expect(bar).toContainText('2 updated');
+    expect(writes).toEqual([
+      { action: 'addNote', note: 'Bulk handover' },
+      { action: 'addNote', note: 'Bulk handover' },
+    ]);
+  });
+
+  test('context menu only offers the selected alert’s custom actions', async ({ page }) => {
+    await page.goto('/#/active');
+    const all = await listAlerts(page);
+    const details = await Promise.all(all.filter((a) => a.status !== 'closed').slice(0, 15).map(async (a) =>
+      page.evaluate(async (id) => (await (await fetch(`/api/alerts/${id}`)).json()) as { id: string; actions: string[]; summary: string }, a.id),
+    ));
+    const target = details.find((detail) => detail.actions.length > 0)!;
+    expect(target).toBeTruthy();
+    await page.getByRole('searchbox', { name: 'Search alerts' }).fill(`"${target.id}"`);
+    await expect(rows(page).first()).toContainText(target.summary);
+    await rows(page).first().click({ button: 'right' });
+    const menu = page.getByRole('dialog', { name: 'Alert actions' });
+    await menu.getByRole('button', { name: 'Run action…' }).click();
+    await menu.getByRole('button', { name: target.actions[0], exact: true }).click();
+    const bar = page.locator('[aria-label="Bulk actions"]');
+    await expect(bar).toContainText(target.actions[0]);
+    await bar.getByRole('button', { name: 'Confirm' }).click();
+    await expect(bar).toContainText('1 updated');
+  });
+
   test('rectangle selection adds with Control and scrolls at the table edge', async ({ page }) => {
     await page.goto('/#/active');
     const grid = page.getByRole('grid', { name: 'Alerts' });
@@ -198,8 +349,11 @@ test.describe('actions', () => {
     await page.goto('/#/active');
     await rows(page).first().click({ button: 'right' });
     const menu = page.getByRole('dialog', { name: 'Alert actions' });
-    await expect(menu).toContainText('Bulk actions are disabled');
-    await expect(menu.getByRole('button', { name: /^Acknowledge/ })).toHaveCount(0);
+    await expect(menu).toContainText('Disabled actions must be enabled in the backend');
+    await expect(menu.getByRole('button', { name: /^Acknowledge/ })).toBeDisabled();
+    await expect(menu.getByRole('button', { name: 'Assign…' })).toBeDisabled();
+    await expect(menu.getByRole('button', { name: 'Snooze…' })).toBeDisabled();
+    await expect(menu.getByRole('button', { name: 'Add note…' })).toBeDisabled();
     await page.keyboard.press('Escape');
     await expect(menu).toHaveCount(0);
     await expect(page.locator('[aria-label="Bulk actions"]')).toContainText('1 selected');

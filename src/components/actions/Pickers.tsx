@@ -1,6 +1,6 @@
 import { useDeferredValue, useMemo, useState, type ReactNode } from 'react';
 import { Loader2, Search } from 'lucide-react';
-import type { DirectoryEntry, ResponderTarget } from '../../../shared/actions';
+import { SNOOZE_MAX_DAYS, type DirectoryEntry, type ResponderTarget } from '../../../shared/actions';
 import { PRIORITIES, type Alert, type Priority } from '../../../shared/types';
 import { useEscalations, useMe, useSchedules, useTeams, useUserSearch } from '../../api/hooks';
 import { cn } from '../../lib/cn';
@@ -97,10 +97,10 @@ function UserSearch({ onPick, showMe }: Readonly<{ onPick: (user: { accountId: s
   );
 }
 
-export function AssignPicker({ onPick }: Readonly<{ onPick: (accountId: string) => void }>) {
+export function AssignPicker({ onPick }: Readonly<{ onPick: (accountId: string, displayName: string) => void }>) {
   return (
     <div className="w-64 p-2">
-      <UserSearch showMe onPick={(user) => onPick(user.accountId)} />
+      <UserSearch showMe onPick={(user) => onPick(user.accountId, user.displayName)} />
     </div>
   );
 }
@@ -183,7 +183,7 @@ function EscalationList({ alert, onPick }: Readonly<{ alert: Alert; onPick: (esc
   );
 }
 
-export function ResponderPicker({ alert, onPick }: Readonly<{ alert: Alert; onPick: (responder: ResponderTarget) => void }>) {
+export function ResponderPicker({ alert, onPick }: Readonly<{ alert: Alert; onPick: (responder: ResponderTarget, name: string) => void }>) {
   const [tab, setTab] = useState<ResponderTarget['type']>('team');
   return (
     <div className="w-72 p-2">
@@ -201,18 +201,18 @@ export function ResponderPicker({ alert, onPick }: Readonly<{ alert: Alert; onPi
           </button>
         ))}
       </div>
-      {tab === 'team' && <TeamList onPick={(t) => onPick({ type: 'team', id: t.id })} />}
-      {tab === 'user' && <UserSearch showMe={false} onPick={(u) => onPick({ type: 'user', id: u.accountId })} />}
-      {tab === 'schedule' && <ScheduleList onPick={(s) => onPick({ type: 'schedule', id: s.id })} />}
-      {tab === 'escalation' && <EscalationList alert={alert} onPick={(e) => onPick({ type: 'escalation', id: e.id })} />}
+      {tab === 'team' && <TeamList onPick={(t) => onPick({ type: 'team', id: t.id }, t.name)} />}
+      {tab === 'user' && <UserSearch showMe={false} onPick={(u) => onPick({ type: 'user', id: u.accountId }, u.displayName)} />}
+      {tab === 'schedule' && <ScheduleList onPick={(s) => onPick({ type: 'schedule', id: s.id }, s.name)} />}
+      {tab === 'escalation' && <EscalationList alert={alert} onPick={(e) => onPick({ type: 'escalation', id: e.id }, e.name)} />}
     </div>
   );
 }
 
-export function EscalatePicker({ alert, onPick }: Readonly<{ alert: Alert; onPick: (escalationId: string) => void }>) {
+export function EscalatePicker({ alert, onPick }: Readonly<{ alert: Alert; onPick: (escalationId: string, name: string) => void }>) {
   return (
     <div className="w-72 p-2">
-      <EscalationList alert={alert} onPick={(e) => onPick(e.id)} />
+      <EscalationList alert={alert} onPick={(e) => onPick(e.id, e.name)} />
     </div>
   );
 }
@@ -255,11 +255,11 @@ export function SnoozePicker({ onPick }: Readonly<{ onPick: (endTime: string) =>
         className="flex gap-1"
         onSubmit={(event) => {
           event.preventDefault();
-          if (Number.isFinite(customMs)) onPick(new Date(customMs).toISOString());
+          if (Number.isFinite(customMs) && customMs >= Date.now() + 60_000 && customMs <= Date.now() + SNOOZE_MAX_DAYS * 86_400_000) onPick(new Date(customMs).toISOString());
         }}
       >
         <input type="datetime-local" aria-label="Snooze until" value={custom} min={localInputValue(Date.now())} onChange={(e) => setCustom(e.target.value)} className={input} />
-        <button type="submit" disabled={!Number.isFinite(customMs) || customMs < Date.now() + 60_000} className="h-7 flex-none rounded-md bg-accent px-2 text-xs font-semibold text-on-accent disabled:opacity-50">
+        <button type="submit" disabled={!Number.isFinite(customMs) || customMs < Date.now() + 60_000 || customMs > Date.now() + SNOOZE_MAX_DAYS * 86_400_000} className="h-7 flex-none rounded-md bg-accent px-2 text-xs font-semibold text-on-accent disabled:opacity-50">
           Snooze
         </button>
       </form>
@@ -269,7 +269,7 @@ export function SnoozePicker({ onPick }: Readonly<{ onPick: (endTime: string) =>
 
 // ---- Priority -----------------------------------------------------------------
 
-export function PriorityPicker({ current, onPick }: Readonly<{ current: Priority; onPick: (priority: Priority) => void }>) {
+export function PriorityPicker({ current, onPick }: Readonly<{ current?: Priority; onPick: (priority: Priority) => void }>) {
   return (
     <div className="flex gap-1 p-2">
       {PRIORITIES.map((p) => (

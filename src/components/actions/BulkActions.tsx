@@ -2,14 +2,15 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { CheckCheck, CircleCheck, Loader2, RotateCcw, TriangleAlert, X } from 'lucide-react';
-import { ACTION_LABEL, BULK_ACTION_IDS, type ActionId, type BulkActionId } from '../../../shared/actions';
+import { ACTION_LABEL, BULK_ACTION_IDS, NOTE_MAX_LENGTH, TAG_MAX_LENGTH, TAGS_MAX_PER_REQUEST, type ActionId, type AlertAction, type BulkActionId } from '../../../shared/actions';
 import type { Alert } from '../../../shared/types';
-import { applyActionResult } from '../../api/hooks';
+import { applyActionResult, useAlertDetail } from '../../api/hooks';
 import { postAction } from '../../api/client';
 import { cn } from '../../lib/cn';
+import { AssignPicker, EscalatePicker, PriorityPicker, ResponderPicker, SnoozePicker } from './Pickers';
 
 /**
- * Bulk acknowledge, unacknowledge and close for the selected alerts.
+ * The context menu provides enabled alert actions for the selection.
  *
  * The API acts on one alert per request, so the alerts are sent one by one
  * (three at a time). Alerts the action does not apply to are skipped up
@@ -19,15 +20,24 @@ import { cn } from '../../lib/cn';
 
 const CONCURRENCY = 3;
 
-export function appliesTo(action: BulkActionId, alert: Alert): boolean {
-  if (alert.status === 'closed') return false;
+type BulkOperation = AlertAction['action'];
+type BulkRequest = AlertAction;
+type PickerAction = Exclude<BulkOperation, BulkActionId>;
+const PICKER_ACTIONS: PickerAction[] = ['assign', 'snooze', 'priority', 'addResponder', 'escalate', 'addTags', 'removeTags', 'addNote', 'customAction'];
+
+export function appliesTo(action: BulkOperation, alert: Alert): boolean {
+  if (alert.status === 'closed') return action === 'addNote' || action === 'addTags' || action === 'removeTags';
   if (action === 'acknowledge') return !alert.acknowledged;
   if (action === 'unacknowledge') return alert.acknowledged;
   return true;
 }
 
 const ICON = { acknowledge: CheckCheck, unacknowledge: RotateCcw, close: CircleCheck } as const;
-const PAST = { acknowledge: 'acknowledged', unacknowledge: 'unacknowledged', close: 'closed' } as const;
+const PAST: Record<BulkOperation, string> = {
+  acknowledge: 'acknowledged', unacknowledge: 'unacknowledged', close: 'closed', assign: 'assigned',
+  snooze: 'snoozed', priority: 'updated', addResponder: 'updated', escalate: 'escalated',
+  addTags: 'updated', removeTags: 'updated', addNote: 'updated', customAction: 'updated',
+};
 
 interface Failure {
   alert: Alert;
@@ -36,12 +46,12 @@ interface Failure {
 
 type Phase =
   | { kind: 'idle' }
-  | { kind: 'confirm'; action: BulkActionId; targets: Alert[]; skipped: number }
-  | { kind: 'running'; action: BulkActionId; total: number; done: number }
-  | { kind: 'result'; action: BulkActionId; ok: number; pending: number; failures: Failure[]; skipped: number };
+  | { kind: 'confirm'; request: BulkRequest; detail?: string; targets: Alert[]; skipped: number }
+  | { kind: 'running'; action: BulkOperation; total: number; done: number }
+  | { kind: 'result'; action: BulkOperation; ok: number; pending: number; failures: Failure[]; skipped: number };
 
 export async function runBulk(
-  action: BulkActionId,
+  action: BulkOperation,
   targets: readonly Alert[],
   send: (alert: Alert) => Promise<'done' | 'pending'>,
   onProgress: (done: number) => void,
@@ -77,26 +87,67 @@ export interface AlertContextMenu {
   alertId: string | null;
 }
 
+function TextActionPicker({ action, onPick }: Readonly<{ action: 'addNote' | 'addTags' | 'removeTags'; onPick: (request: BulkRequest, detail: string) => void }>) {
+  const [text, setText] = useState('');
+  const tags = [...new Set(text.split(',').map((tag) => tag.trim()).filter(Boolean))];
+  const valid = action === 'addNote'
+    ? text.trim().length > 0 && text.trim().length <= NOTE_MAX_LENGTH
+    : tags.length > 0 && tags.length <= TAGS_MAX_PER_REQUEST && tags.every((tag) => tag.length <= TAG_MAX_LENGTH);
+  return (
+    <form className="grid w-64 gap-2 p-2" onSubmit={(event) => {
+      event.preventDefault();
+      if (!valid) return;
+      if (action === 'addNote') {
+        const note = text.trim();
+        onPick({ action, note }, `: “${note.length > 120 ? `${note.slice(0, 120)}…` : note}”`);
+      } else {
+        onPick({ action, tags }, `: ${tags.join(', ')}`);
+      }
+    }}>
+      <label className="grid gap-1">
+        {action === 'addNote' ? 'Note' : 'Tags (comma-separated)'}
+        <textarea autoFocus aria-label={action === 'addNote' ? 'Note' : 'Tags'} rows={3} maxLength={action === 'addNote' ? NOTE_MAX_LENGTH : undefined} value={text} onChange={(event) => setText(event.target.value)} className="w-full rounded-md border border-line-strong bg-panel px-2 py-1 text-fg" />
+      </label>
+      {action !== 'addNote' && <span className="text-muted">Up to {TAGS_MAX_PER_REQUEST} tags, {TAG_MAX_LENGTH} characters each.</span>}
+      <button type="submit" className={button} disabled={!valid}>Continue</button>
+    </form>
+  );
+}
+
+function CustomActionPicker({ alert, onPick }: Readonly<{ alert: Alert; onPick: (request: BulkRequest, detail: string) => void }>) {
+  const detail = useAlertDetail(alert.id, alert.updatedAt);
+  if (detail.isPending) return <p className="p-2 text-muted">Loading actions…</p>;
+  if (detail.error) return <p role="alert" className="p-2 text-crit">{detail.error.message}</p>;
+  const actions = detail.data?.actions ?? [];
+  return actions.length ? (
+    <div className="grid gap-1 p-2">
+      {actions.map((actionName) => <button key={actionName} type="button" className="rounded px-2 py-1 text-left hover:bg-hover" onClick={() => onPick({ action: 'customAction', actionName }, `: ${actionName}`)}>{actionName}</button>)}
+    </div>
+  ) : <p className="p-2 text-muted">No custom actions on this alert.</p>;
+}
+
 function ContextMenu({
-  menu, selected, actions, busy, onAction, onOpenAlert, onClose,
+  menu, selected, allowed, busy, onAction, onOpenAlert, onClose,
 }: Readonly<{
   menu: AlertContextMenu;
   selected: Alert[];
-  actions: BulkActionId[];
+  allowed: ReadonlySet<ActionId>;
   busy: boolean;
-  onAction: (action: BulkActionId) => void;
+  onAction: (request: BulkRequest, detail?: string) => void;
   onOpenAlert: (id: string) => void;
   onClose: () => void;
 }>) {
   const ref = useRef<HTMLDivElement>(null);
+  const [picker, setPicker] = useState<PickerAction | null>(null);
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
+    element.scrollTop = 0;
     const rect = element.getBoundingClientRect();
     element.style.left = `${Math.max(0, Math.min(menu.x, window.innerWidth - rect.width))}px`;
     element.style.top = `${Math.max(0, Math.min(menu.y, window.innerHeight - rect.height))}px`;
-    element.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
-  }, [menu]);
+    if (!picker) element.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+  }, [menu, picker]);
   useEffect(() => {
     const dismiss = (event: globalThis.PointerEvent) => {
       if (!ref.current?.contains(event.target as Node)) onClose();
@@ -108,7 +159,7 @@ function ContextMenu({
         onClose();
       }
     };
-    const scroll = () => onClose();
+    const scroll = (event: Event) => { if (!ref.current?.contains(event.target as Node)) onClose(); };
     document.addEventListener('pointerdown', dismiss);
     document.addEventListener('keydown', key, true);
     document.addEventListener('scroll', scroll, true);
@@ -119,23 +170,46 @@ function ContextMenu({
     };
   }, [onClose]);
 
+  const picked = (request: BulkRequest, detail?: string) => { onAction(request, detail); onClose(); };
+  const first = selected[0];
   return createPortal(
-    <div ref={ref} role="dialog" aria-label="Alert actions" className="fixed z-50 min-w-48 rounded-md border border-line-strong bg-panel p-1 text-xs shadow-pop" style={{ left: menu.x, top: menu.y }}>
+    <div ref={ref} role="dialog" aria-label="Alert actions" className="fixed z-50 max-h-[80vh] min-w-48 overflow-y-auto rounded-md border border-line-strong bg-panel p-1 text-xs shadow-pop" style={{ left: menu.x, top: menu.y }}>
       <div className="px-2 py-1.5 font-semibold text-muted">{selected.length} selected</div>
-      {menu.alertId && (
-        <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-hover" onClick={() => { onOpenAlert(menu.alertId!); onClose(); }}>
-          Open alert details
-        </button>
+      {picker && first ? (
+        <>
+          <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-hover" onClick={() => setPicker(null)}>Back</button>
+          {picker === 'assign' && <AssignPicker onPick={(accountId, name) => picked({ action: 'assign', accountId }, ` to ${name}`)} />}
+          {picker === 'snooze' && <SnoozePicker onPick={(endTime) => picked({ action: 'snooze', endTime }, ` until ${new Date(endTime).toLocaleString()}`)} />}
+          {picker === 'priority' && <PriorityPicker onPick={(priority) => picked({ action: 'priority', priority }, ` to ${priority}`)} />}
+          {(picker === 'addResponder' || picker === 'escalate') && selected.length > 1 && <p className="px-2 text-muted">Choices are based on the first selected alert; Jira may reject other alerts.</p>}
+          {picker === 'addResponder' && <ResponderPicker alert={first} onPick={(responder, name) => picked({ action: 'addResponder', responder }, `: ${name}`)} />}
+          {picker === 'escalate' && <EscalatePicker alert={first} onPick={(escalationId, name) => picked({ action: 'escalate', escalationId }, `: ${name}`)} />}
+          {(picker === 'addNote' || picker === 'addTags' || picker === 'removeTags') && <TextActionPicker action={picker} onPick={picked} />}
+          {picker === 'customAction' && <CustomActionPicker alert={first} onPick={picked} />}
+        </>
+      ) : (
+        <>
+          {menu.alertId && (
+            <button type="button" className="block w-full rounded px-2 py-1.5 text-left hover:bg-hover" onClick={() => { onOpenAlert(menu.alertId!); onClose(); }}>
+              Open alert details
+            </button>
+          )}
+          {BULK_ACTION_IDS.map((action) => {
+            const count = selected.filter((alert) => appliesTo(action, alert)).length;
+            return (
+              <button key={action} type="button" disabled={!allowed.has(action) || busy || count === 0} className="block w-full rounded px-2 py-1.5 text-left hover:bg-hover disabled:opacity-50" onClick={() => picked({ action })}>
+                {ACTION_LABEL[action]} ({count})
+              </button>
+            );
+          })}
+          {PICKER_ACTIONS.map((action) => (
+            <button key={action} type="button" disabled={!allowed.has(action) || busy || !selected.some((alert) => appliesTo(action, alert)) || (action === 'customAction' && selected.length !== 1)} title={action === 'customAction' && selected.length !== 1 ? 'Custom actions are specific to one alert.' : undefined} className="block w-full rounded px-2 py-1.5 text-left hover:bg-hover disabled:opacity-50" onClick={() => setPicker(action)}>
+              {ACTION_LABEL[action]}…
+            </button>
+          ))}
+          {[...BULK_ACTION_IDS, ...PICKER_ACTIONS].some((action) => !allowed.has(action)) && <div className="px-2 py-1.5 text-muted">Disabled actions must be enabled in the backend.</div>}
+        </>
       )}
-      {actions.map((action) => {
-        const count = selected.filter((alert) => appliesTo(action, alert)).length;
-        return (
-          <button key={action} type="button" disabled={busy || count === 0} className="block w-full rounded px-2 py-1.5 text-left hover:bg-hover disabled:opacity-50" onClick={() => { onAction(action); onClose(); }}>
-            {ACTION_LABEL[action]} ({count})
-          </button>
-        );
-      })}
-      {actions.length === 0 && <div className="px-2 py-1.5 text-muted">Bulk actions are disabled.</div>}
     </div>,
     document.body,
   );
@@ -172,19 +246,20 @@ export function BulkActionBar({
   const actions = BULK_ACTION_IDS.filter((id) => allowed.has(id));
   if (selected.length === 0 && phase.kind !== 'result' && phase.kind !== 'running') return null;
 
-  const confirm = (action: BulkActionId) => {
-    const targets = selected.filter((alert) => appliesTo(action, alert));
-    if (targets.length > 0) setPhase({ kind: 'confirm', action, targets, skipped: selected.length - targets.length });
+  const confirm = (request: BulkRequest, detail?: string) => {
+    const targets = selected.filter((alert) => appliesTo(request.action, alert));
+    if (targets.length > 0) setPhase({ kind: 'confirm', request, detail, targets, skipped: selected.length - targets.length });
   };
 
-  const start = async (action: BulkActionId, targets: Alert[], skipped: number) => {
+  const start = async ({ request, targets, skipped }: Extract<Phase, { kind: 'confirm' }>) => {
+    const action = request.action;
     const startedWith = selectionKey;
     setPhase({ kind: 'running', action, total: targets.length, done: 0 });
     const outcome = await runBulk(
       action,
       targets,
       async (alert) => {
-        const response = await postAction(alert.id, { action });
+        const response = await postAction(alert.id, request);
         applyActionResult(queryClient, alert.id, response);
         return response.result.state;
       },
@@ -208,7 +283,7 @@ export function BulkActionBar({
                 type="button"
                 className={button}
                 disabled={targets.length === 0}
-                onClick={() => confirm(action)}
+                onClick={() => confirm({ action })}
               >
                 <Icon size={13} aria-hidden />
                 {ACTION_LABEL[action]}
@@ -216,7 +291,7 @@ export function BulkActionBar({
               </button>
             );
           })}
-          {actions.length === 0 && <span className="text-muted">Bulk actions are disabled.</span>}
+          {actions.length === 0 && <span className="text-muted">{PICKER_ACTIONS.some((action) => allowed.has(action)) ? 'Actions are available from the alert menu.' : 'Bulk actions are disabled.'}</span>}
         </>
       );
       break;
@@ -224,14 +299,17 @@ export function BulkActionBar({
       body = (
         <>
           <span className="font-semibold">
-            {ACTION_LABEL[phase.action]} {phase.targets.length} alert{phase.targets.length === 1 ? '' : 's'}?
+            {ACTION_LABEL[phase.request.action]} {phase.targets.length} alert{phase.targets.length === 1 ? '' : 's'}{phase.detail ?? ''}?
           </span>
+          {phase.targets.length > 1 && (phase.request.action === 'addResponder' || phase.request.action === 'escalate') && (
+            <span className="text-muted">Jira may reject this target for some alerts.</span>
+          )}
           {phase.skipped > 0 && (
-            <span className="text-muted" data-tip={`Already ${PAST[phase.action]} or closed`} data-tip-always="">
+            <span className="text-muted" data-tip="Not applicable or closed" data-tip-always="">
               {phase.skipped} skipped
             </span>
           )}
-          <button type="button" autoFocus className={cn(button, 'border-accent bg-accent text-on-accent hover:bg-accent hover:opacity-90')} onClick={() => void start(phase.action, phase.targets, phase.skipped)}>
+          <button type="button" autoFocus className={cn(button, 'border-accent bg-accent text-on-accent hover:bg-accent hover:opacity-90')} onClick={() => void start(phase)}>
             Confirm
           </button>
           <button type="button" className={button} onClick={() => setPhase({ kind: 'idle' })}>
@@ -280,7 +358,7 @@ export function BulkActionBar({
   return (
     <div className="flex flex-none flex-wrap items-center gap-2 border-b border-accent/40 bg-accent-soft px-3 py-1.5 text-xs" aria-label="Bulk actions">
       {contextMenu && (
-        <ContextMenu menu={contextMenu} selected={selected} actions={actions} busy={phase.kind !== 'idle'} onAction={confirm} onOpenAlert={onOpenAlert} onClose={onCloseMenu} />
+        <ContextMenu menu={contextMenu} selected={selected} allowed={allowed} busy={phase.kind !== 'idle'} onAction={confirm} onOpenAlert={onOpenAlert} onClose={onCloseMenu} />
       )}
       {phase.kind !== 'result' && (
         <span className="font-semibold tabular-nums">{selected.length} selected</span>
