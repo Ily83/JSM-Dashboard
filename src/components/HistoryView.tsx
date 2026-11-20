@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { skipToken, useQuery } from '@tanstack/react-query';
-import { DAY_MS, HISTORY_PAGE_SIZE, historyDateLimits, historyWindows, parseUtcDate, utcDate } from '../../shared/history';
+import { HISTORY_PAGE_SIZE, historyDateLimits, historyWindows, parseUtcDate, previousCalendarMonth, utcDate } from '../../shared/history';
 import { fetchHistory } from '../api/client';
 import { DEFAULT_ANALYSIS_SETTINGS, type AnalysisSettings } from '../lib/historyBreakdowns';
 import type { HistoryInvestigation } from '../state/historyInvestigations';
@@ -13,8 +13,9 @@ const dateInput = 'rounded-md border border-line-strong bg-panel px-2 py-1 text-
 
 export function HistoryView() {
   const { earliest, today } = historyDateLimits(Date.now());
-  const [from, setFrom] = useState(() => utcDate(parseUtcDate(today)! - 29 * DAY_MS));
-  const [to, setTo] = useState(today);
+  const [defaultRange] = useState(() => previousCalendarMonth(Date.now()));
+  const [from, setFrom] = useState(defaultRange.from);
+  const [to, setTo] = useState(defaultRange.to);
   const [windows, setWindows] = useState<ReturnType<typeof historyWindows>>([]);
   const [period, setPeriod] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -93,6 +94,7 @@ export function HistoryView() {
               {'To'}
               <input type="date" className={dateInput} min={earliest} max={today} required value={to} onChange={(event) => setTo(event.target.value)} />
             </label>
+            <button type="button" className={button} onClick={() => { const range = previousCalendarMonth(Date.now()); setFrom(range.from); setTo(range.to); setInputError(''); }}>Last month</button>
             <button type="button" className={button} onClick={() => { setFrom(earliest); setTo(today); setInputError(''); }}>Past 12 months</button>
             <button type="submit" className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent">Load history</button>
             <button type="submit" value="analysis" className={button}>Analyze</button>

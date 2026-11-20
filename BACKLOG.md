@@ -26,6 +26,17 @@ Done that way: writes are off unless `JIRA_WRITE_ACTIONS` enables them, and they
 
 Reuse the History date, customer, and tag filters. Label rankings as partial when the analysis limit is reached or records could not be read.
 
+### Historical analytics gaps
+
+- [x] **High-volume background analysis:** Scan beyond 500 alerts per month in paced, low-priority batches; split dense windows around Jira's pagination limit and label incomplete results. Progress and cancellation are available; jobs and results remain in memory until the backend restarts or another analysis starts.
+- [ ] **Validate high-volume analysis on a dedicated Jira test site:** Confirm request cost, rate limits, pagination and completeness against representative production-like volumes. Never use live writes for testing.
+- [ ] **Historical overview:** Show total alerts and breakdowns by current status and priority for the selected creation-date range. Clearly distinguish current status from status at creation or a historical snapshot.
+- [ ] **Daily trends:** Show alerts created per day, with breakdowns by current status or priority and a daily average. Compare created and closed alerts where reliable closure timestamps are available; label the date and status semantics and any missing data.
+- [ ] **Historical rankings:** Rank alerts by source, team, and tag for the selected date range, with counts and drill-down. Explain how alerts with multiple teams or tags are counted.
+- [ ] **History filters:** Extend filters across historical charts and drill-downs to cover source, integration, status, priority, message include/exclude and, where available, alert-detail keys and values. Support tag and source inclusion/exclusion, and make timezone and date boundaries explicit. Label filters or results as incomplete when required data is unavailable.
+
+Time-of-day, weekday, and business-hours patterns are not planned unless requested.
+
 ## Saved views and dashboard usability
 
 - [x] **Export and import settings:** Export a single saved view or a full preferences backup as versioned JSON. Preview and validate imports, and offer **Keep both** or **Replace** for conflicting views. Never include Jira credentials or alert records; warn that saved customer names and tags can still be sensitive.

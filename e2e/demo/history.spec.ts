@@ -2,6 +2,15 @@ import { expect, test } from '../fixtures';
 
 test('History: every breakdown, drill-down and a saved investigation', async ({ page }) => {
   await page.goto('/#/history');
+  const now = new Date();
+  const previousMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 10);
+  const previousMonthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).toISOString().slice(0, 10);
+  await expect(page.getByLabel('From')).toHaveValue(previousMonth);
+  await expect(page.getByLabel('To', { exact: true })).toHaveValue(previousMonthEnd);
+  await page.getByRole('button', { name: 'Past 12 months' }).click();
+  await page.getByRole('button', { name: 'Last month' }).click();
+  await expect(page.getByLabel('From')).toHaveValue(previousMonth);
+  await expect(page.getByLabel('To', { exact: true })).toHaveValue(previousMonthEnd);
   await page.getByRole('button', { name: 'Past 12 months' }).click();
   await page.getByRole('button', { name: 'Analyze', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Recurring' })).toBeVisible({ timeout: 30_000 });

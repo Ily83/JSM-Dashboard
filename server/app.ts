@@ -4,11 +4,13 @@ import compression from 'compression';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
 import { DAY_MS, HISTORY_MAX_OFFSET, HISTORY_PAGE_SIZE, HISTORY_WINDOW_DAYS, historyDateLimits, parseUtcDate } from '../shared/history';
+import { HISTORY_ANALYSIS_RESULT_PAGE_SIZE } from '../shared/historyAnalysis';
 import type { ApiError, StatusResponse } from '../shared/types';
 import type { AppConfig } from './config';
 import { JiraApiError, type JiraErrorKind } from './jira/client';
 import { log } from './logger';
 import type { AlertStore } from './services/alertStore';
+import { HistoryAnalysisService } from './services/historyAnalysis';
 import { ActionRequestError, type ActionService, type AlertOperations } from './services/operations';
 import type { MaintenanceService, OpsContextSource } from './services/opsContext';
 
@@ -19,7 +21,9 @@ const VERSION = /^[a-f0-9]{1,64}$/;
 const ACTION_ROUTE = /^\/alerts\/[A-Za-z0-9._-]{1,128}\/actions$/;
 const MAINTENANCE_CREATE_ROUTE = /^\/maintenances$/;
 const MAINTENANCE_CANCEL_ROUTE = /^\/maintenances\/[A-Za-z0-9:._-]{1,128}\/cancel$/;
-const WRITE_ROUTES = [ACTION_ROUTE, MAINTENANCE_CREATE_ROUTE, MAINTENANCE_CANCEL_ROUTE];
+const HISTORY_ANALYSIS_START_ROUTE = /^\/history-analysis$/;
+const HISTORY_ANALYSIS_CANCEL_ROUTE = /^\/history-analysis\/cancel$/;
+const WRITE_ROUTES = [ACTION_ROUTE, MAINTENANCE_CREATE_ROUTE, MAINTENANCE_CANCEL_ROUTE, HISTORY_ANALYSIS_START_ROUTE, HISTORY_ANALYSIS_CANCEL_ROUTE];
 const isWriteRoute = (path: string) => WRITE_ROUTES.some((route) => route.test(path));
 /** Custom header that a page on another site cannot send without a CORS preflight, which is never granted. */
 export const ACTION_HEADER = 'x-alert-center-action';
@@ -69,6 +73,7 @@ export function createApp(
   opsContext?: OpsContextRoutes,
 ) {
   const app = express();
+  const analysis = new HistoryAnalysisService((page) => store.getHistory(page), config.mode === 'demo' ? 0 : 1000);
   app.disable('x-powered-by');
   app.use(
     helmet({
@@ -278,6 +283,51 @@ export function createApp(
     const id = alertId(req, res);
     if (!id) return;
     res.json(await actions.run(id, req.body));
+  });
+
+  // These guarded POSTs control only the local read-only analysis job.
+  api.get('/history-analysis', (_req, res) => res.json(analysis.status()));
+  api.get('/history-analysis/results', (req, res) => {
+    const results = analysis.results(typeof req.query.id === 'string' ? req.query.id : '');
+    if (!results) {
+      res.status(409).json({ error: 'Analysis results are not ready.' } satisfies ApiError);
+      return;
+    }
+    const monthIndex = typeof req.query.month === 'string' && /^\d+$/.test(req.query.month) ? Number(req.query.month) : NaN;
+    const offset = typeof req.query.offset === 'string' && /^\d+$/.test(req.query.offset) ? Number(req.query.offset) : NaN;
+    const month = results[monthIndex];
+    if (!month || !Number.isSafeInteger(offset) || offset > month.alerts.length || offset % HISTORY_ANALYSIS_RESULT_PAGE_SIZE !== 0) {
+      res.status(400).json({ error: 'Invalid analysis result page.' } satisfies ApiError);
+      return;
+    }
+    res.json({
+      month: { ...month, alerts: month.alerts.slice(offset, offset + HISTORY_ANALYSIS_RESULT_PAGE_SIZE) },
+      hasNextPage: offset + HISTORY_ANALYSIS_RESULT_PAGE_SIZE < month.alerts.length,
+      hasNextMonth: monthIndex + 1 < results.length,
+    });
+  });
+  api.post('/history-analysis', ...writeGuard, (req, res) => {
+    const from = parseUtcDate(req.body?.from);
+    const to = parseUtcDate(req.body?.to);
+    const { earliest, today } = historyDateLimits(Date.now());
+    if (from === null || to === null || from > to || from < parseUtcDate(earliest)! || to > parseUtcDate(today)!) {
+      res.status(400).json({ error: 'Choose valid dates within the past 12 months (UTC).' } satisfies ApiError);
+      return;
+    }
+    const job = analysis.start(from, to);
+    if (!job) {
+      res.status(409).json({ error: 'Another history analysis is running. Cancel it before starting a different range.' } satisfies ApiError);
+      return;
+    }
+    res.json(job);
+  });
+  api.post('/history-analysis/cancel', ...writeGuard, (req, res) => {
+    const job = analysis.cancel(typeof req.body?.id === 'string' ? req.body.id : '');
+    if (!job) {
+      res.status(409).json({ error: 'This analysis is no longer the current job.' } satisfies ApiError);
+      return;
+    }
+    res.json(job);
   });
 
   // ---- Operations context: maintenances, heartbeats, on-call -------------------

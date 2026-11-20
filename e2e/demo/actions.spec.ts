@@ -114,6 +114,112 @@ test.describe('actions', () => {
     if (fits < 6) await expect(bar).toContainText(`${6 - fits} skipped`);
   });
 
+  test('drag selects alerts and the context menu confirms bulk actions', async ({ page }) => {
+    await page.goto('/#/active');
+    await page.getByRole('radio', { name: /^Unacknowledged/ }).click();
+    const first = rows(page).nth(0);
+    const fifth = rows(page).nth(4);
+    await expect(fifth).toBeVisible();
+    const start = (await first.boundingBox())!;
+    const end = (await fifth.boundingBox())!;
+    let writes = 0;
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && request.url().includes('/actions')) writes += 1;
+    });
+
+    await page.mouse.move(start.x + 120, start.y + start.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(end.x + 200, end.y + end.height / 2, { steps: 4 });
+    await expect(page.locator('[data-selection-box]')).toBeVisible();
+    await page.mouse.up();
+    await expect(page.locator('[data-selection-box]')).toHaveCount(0);
+    const bar = page.locator('[aria-label="Bulk actions"]');
+    await expect.poll(async () => page.locator('.at-row[data-checked]').count()).toBeGreaterThan(1);
+    const selected = await page.locator('.at-row[data-checked]').count();
+    await expect(bar).toContainText(`${selected} selected`);
+    await expect(panel(page)).toHaveCount(0);
+
+    await page.locator('.at-row[data-checked]').first().click({ button: 'right' });
+    const menu = page.getByRole('dialog', { name: 'Alert actions' });
+    await expect(menu).toContainText(`${selected} selected`);
+    await menu.getByRole('button', { name: /^Acknowledge/ }).click();
+    await expect(bar).toContainText(`Acknowledge ${selected} alerts?`);
+    expect(writes).toBe(0);
+    await bar.getByRole('button', { name: 'Cancel' }).click();
+
+    await rows(page).nth(8).click({ button: 'right' });
+    await expect(menu).toContainText('1 selected');
+    await expect(bar).toContainText('1 selected');
+    await menu.getByRole('button', { name: /^Acknowledge/ }).click();
+    expect(writes).toBe(0);
+    await bar.getByRole('button', { name: 'Confirm' }).click();
+    await expect(bar).toContainText('1 acknowledged');
+    expect(writes).toBe(1);
+    await bar.getByRole('button', { name: 'Dismiss' }).click();
+
+    await rows(page).first().click({ button: 'right' });
+    await menu.getByRole('button', { name: 'Open alert details' }).click();
+    await expect(panel(page)).toBeVisible();
+    expect(writes).toBe(1);
+  });
+
+  test('rectangle selection adds with Control and scrolls at the table edge', async ({ page }) => {
+    await page.goto('/#/active');
+    const grid = page.getByRole('grid', { name: 'Alerts' });
+    await rows(page).nth(0).locator('input').click();
+    const third = (await rows(page).nth(2).boundingBox())!;
+    const sixth = (await rows(page).nth(5).boundingBox())!;
+    await page.keyboard.down('Control');
+    await page.mouse.move(third.x + 120, third.y + third.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(sixth.x + 200, sixth.y + sixth.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await page.keyboard.up('Control');
+    await expect(rows(page).nth(0)).toHaveAttribute('data-checked', 'true');
+    await expect.poll(async () => page.locator('.at-row[data-checked]').count()).toBeGreaterThan(2);
+
+    const gridBox = (await grid.boundingBox())!;
+    const first = (await rows(page).first().boundingBox())!;
+    await page.mouse.move(first.x + 120, first.y + first.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(first.x + 200, gridBox.y + gridBox.height - 4, { steps: 5 });
+    await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBeGreaterThan(40);
+    await page.mouse.up();
+    await expect(page.locator('[aria-label="Bulk actions"]')).toContainText(/selected/);
+    await expect(panel(page)).toHaveCount(0);
+  });
+
+  test('selection and details remain available in read-only mode', async ({ page }) => {
+    await page.route('**/api/status', async (route) => {
+      const response = await route.fetch();
+      const status = await response.json();
+      await route.fulfill({ response, json: { ...status, readOnly: true, writes: { enabled: false, actions: [] } } });
+    });
+    await page.goto('/#/active');
+    await rows(page).first().click({ button: 'right' });
+    const menu = page.getByRole('dialog', { name: 'Alert actions' });
+    await expect(menu).toContainText('Bulk actions are disabled');
+    await expect(menu.getByRole('button', { name: /^Acknowledge/ })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(page.locator('[aria-label="Bulk actions"]')).toContainText('1 selected');
+    await rows(page).first().click();
+    await expect(panel(page)).toBeVisible();
+  });
+
+  test('right-clicking a repeated group selects its alerts', async ({ page }) => {
+    await page.goto('/#/active');
+    await page.getByRole('button', { name: 'Group repeats' }).click();
+    const group = page.locator('.at-row[data-group]').first();
+    await expect(group).toBeVisible();
+    const label = await group.locator('input').getAttribute('aria-label');
+    const count = Number(label?.match(/Select (\d+) alerts/)?.[1]);
+    expect(count).toBeGreaterThan(1);
+    await group.click({ button: 'right' });
+    await expect(page.getByRole('dialog', { name: 'Alert actions' })).toContainText(`${count} selected`);
+    await expect(page.locator('[aria-label="Bulk actions"]')).toContainText(`${count} selected`);
+  });
+
   test.describe('refusals', () => {
     // The browser logs the deliberate 403 and 400 answers.
     test.use({ allowConsole: [/Failed to load resource: the server responded with a status of 40[03]/] });

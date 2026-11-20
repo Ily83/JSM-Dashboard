@@ -5,6 +5,7 @@ import { RawAlertSchema } from '../server/jira/schemas';
 const ctx: MapContext = {
   rules: {
     customerTagPrefixes: ['customer:', 'cust:'],
+    customerCompanyTagPrefixes: [],
     customerPropertyKeys: ['customer'],
     serviceTagPrefixes: ['service:'],
     servicePropertyKeys: ['service'],
@@ -25,6 +26,19 @@ describe('mapAlert', () => {
     expect(alert.customers).toEqual(['Contoso', 'Fabrikam', 'Litware']);
     expect(alert.tags).toEqual(['prod']);
     expect(alert.rawTags).toEqual(['customer:Contoso', 'CUST:Fabrikam', 'prod']);
+  });
+
+  it('recognizes configured company tags case-insensitively and keeps them as tags', () => {
+    const companyCtx = {
+      ...ctx,
+      rules: { ...ctx.rules, customerCompanyTagPrefixes: ['Acme', 'AcmeCorp', 'Globex'] },
+    };
+    const alert = mapAlert(raw({
+      tags: ['ACME-site', 'acme', 'acmecorp-hq', 'globex', 'acmeextra-site', 'shared-site', 'prod'],
+      extraProperties: { customer: 'acme' },
+    }), companyCtx);
+    expect(alert.customers).toEqual(['Acme', 'AcmeCorp', 'Globex']);
+    expect(alert.tags).toEqual(['ACME-site', 'acme', 'acmecorp-hq', 'globex', 'acmeextra-site', 'shared-site', 'prod']);
   });
 
   it('takes the service from a tag, then a property, then the entity', () => {

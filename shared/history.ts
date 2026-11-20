@@ -22,6 +22,16 @@ export function historyDateLimits(now: number): { earliest: string; today: strin
   return { earliest: utcDate(date.getTime()), today: utcDate(now) };
 }
 
+export function previousCalendarMonth(now: number): { from: string; to: string } {
+  const date = new Date(now);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  return {
+    from: utcDate(Date.UTC(year, month - 1, 1)),
+    to: utcDate(Date.UTC(year, month, 0)),
+  };
+}
+
 /** Split inclusive UTC dates into non-overlapping windows, newest first. */
 export function historyWindows(from: number, to: number) {
   const windows: Array<{ from: string; to: string }> = [];

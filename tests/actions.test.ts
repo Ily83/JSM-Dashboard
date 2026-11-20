@@ -1,6 +1,6 @@
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ACTION_IDS } from '../shared/actions';
 import { createApp } from '../server/app';
 import { loadConfig, parseWriteActions, type AppConfig, type JiraConfig } from '../server/config';
@@ -195,8 +195,8 @@ function demoConfig(writeActions = [...ACTION_IDS]): AppConfig {
   return { ...loadConfig({}), writeActions };
 }
 
-async function serve(config: AppConfig) {
-  const demo = new DemoSource(config.extraction, 0, Date.now());
+async function serve(config: AppConfig, extraAlerts = 0) {
+  const demo = new DemoSource(config.extraction, extraAlerts, Date.now());
   demo.actionDelayMs = 0;
   const store = new AlertStore(demo, 30_000);
   const actions = new ActionService(demo, store, config.writeActions);
@@ -225,6 +225,46 @@ function rawPost(url: string, headers: Record<string, string>, body: string): Pr
 }
 
 const actionHeaders = { 'content-type': 'application/json', 'x-alert-center-action': '1' };
+
+describe('background history analysis API', () => {
+  it('runs in read-only mode, guards requests, and returns all results in batches', async () => {
+    const { base, server, alerts } = await serve(demoConfig([]), 2200);
+    servers.push(server);
+    const url = `${base}/api/history-analysis`;
+    const today = new Date();
+    const from = new Date(today.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
+    const to = today.toISOString().slice(0, 10);
+    const body = JSON.stringify({ from, to });
+    expect((await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body })).status).toBe(403);
+    expect((await fetch(url, { method: 'POST', headers: { ...actionHeaders, origin: 'https://evil.example' }, body })).status).toBe(403);
+    const response = await fetch(url, { method: 'POST', headers: actionHeaders, body });
+    expect(response.status).toBe(200);
+    const job = await response.json() as { id: string };
+    await vi.waitFor(async () => {
+      const state = await (await fetch(url)).json() as { state: string };
+      expect(state.state).toBe('completed');
+    }, { timeout: 15_000 });
+
+    let total = 0;
+    let pages = 0;
+    for (let month = 0; ; month += 1) {
+      let offset = 0;
+      let page: { month: { alerts: unknown[] }; hasNextPage: boolean; hasNextMonth: boolean };
+      do {
+        const result = await fetch(`${url}/results?id=${job.id}&month=${month}&offset=${offset}`);
+        expect(result.status).toBe(200);
+        page = await result.json() as typeof page;
+        total += page.month.alerts.length;
+        pages += 1;
+        offset += 1000;
+      } while (page.hasNextPage);
+      if (!page.hasNextMonth) break;
+    }
+    expect(pages).toBeGreaterThan(2);
+    expect(total).toBe(alerts.length);
+    expect((await fetch(`${url}/results?id=old&month=0&offset=0`)).status).toBe(409);
+  });
+});
 
 describe('POST /api/alerts/:id/actions', () => {
   it('runs an action on demo data and returns the updated alert', async () => {

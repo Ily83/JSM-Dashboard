@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { JiraConfig } from '../server/config';
 import { JiraApiError, JiraClient } from '../server/jira/client';
 
@@ -64,6 +64,29 @@ describe('JiraClient retries', () => {
     const offline = fakeApi((n) => (n === 1 ? new TypeError('fetch failed') : json({ values: [] })));
     await expect(offline.client.listNotes('a1')).resolves.toEqual({ values: [], hasMore: false });
     expect(offline.sent).toHaveLength(2);
+  });
+
+  describe('JiraClient scheduling', () => {
+    it('serves interactive requests before queued background analysis', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const sent: string[] = [];
+      const client = new JiraClient(config, 1, (async (input: RequestInfo | URL) => {
+        const path = new URL(String(input)).pathname;
+        sent.push(path);
+        if (sent.length === 1) await gate;
+        return json({ values: [] });
+      }) as typeof fetch);
+      const first = client.listAlerts({ offset: 0, size: 10 });
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      const background = client.listAlerts({ offset: 0, size: 10, background: true });
+      const interactive = client.listNotes('a1');
+      await Promise.resolve();
+      release();
+      await Promise.all([first, background, interactive]);
+      expect(sent[1]).toContain('/alerts/a1/notes');
+      expect(sent[2]).toMatch(/\/v1\/alerts$/);
+    });
   });
 
   it('gives up on a read after three attempts', async () => {

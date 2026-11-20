@@ -281,7 +281,7 @@ describe('CUSTOMER_MAP_FILE', () => {
   });
 
   it('adds mapped customers to the ones from tags, without duplicates', () => {
-    const rules: ExtractionRules = { customerTagPrefixes: ['customer:'], customerPropertyKeys: [], serviceTagPrefixes: [], servicePropertyKeys: [], serviceFallbackToEntity: true };
+    const rules: ExtractionRules = { customerTagPrefixes: ['customer:'], customerCompanyTagPrefixes: [], customerPropertyKeys: [], serviceTagPrefixes: [], servicePropertyKeys: [], serviceFallbackToEntity: true };
     const map = buildCustomerMap([{ pattern: 'vm-contoso-*', customers: ['contoso', 'Fabrikam'] }]);
     const alert = mapAlert(
       { id: 'a1', entity: 'vm-contoso-01', tags: ['customer:Contoso'] },
