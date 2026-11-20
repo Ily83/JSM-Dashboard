@@ -2,6 +2,46 @@
 
 Newest release first. Each release lists what changed, how to install or update, and what is known not to work yet.
 
+## 0.3.1 (2026-11-20)
+
+Code quality and a SonarQube setup. No new features; behaviour and appearance are unchanged apart from one crash fix.
+
+### Update from 0.3.0
+
+```bash
+git pull
+npm ci
+```
+
+### Changed
+
+- **SonarQube:** `sonar-project.properties` (project key `jsm-dashboard`), `npm run test:coverage` for the coverage report, and a README section on scanning with the containerised scanner.
+- **Bugs and security hotspots fixed** (6 and 8):
+  - table rows handle their own keys;
+  - regular expressions that could backtrack on long input are replaced with loops;
+  - cryptographic random numbers and SHA-256 replace `Math.random` and SHA-1;
+  - a sort now has a comparison function, and a `reduce` has a start value.
+- **All 365 code smells resolved:**
+  - 27 functions are split below the complexity threshold;
+  - props are read-only, with no nested ternaries;
+  - semantic elements replace ARIA roles where they are a drop-in replacement.
+- **Fix:** "New maintenance" no longer crashes when "Start later" is ticked and the start time is cleared while confirming.
+- The end-to-end test ports can be moved (`E2E_DEMO_PORT`, `E2E_LIVE_PORT`).
+
+### Tested
+
+- 189 unit tests (36 new), typecheck and build.
+- 13 browser tests in demo mode, plus 75 further browser checks, and 4 live round-trip tests against a trial site.
+- The refactored code was compared side by side with the old code on generated inputs; the demo data is unchanged; screenshots and layout boxes of every changed element are identical.
+- SonarQube Community Build 26.6, in the containerised scanner:
+  - 0 bugs, 0 vulnerabilities, 0 code smells and 0 open security hotspots;
+  - A ratings for security, reliability and maintainability, and 0% duplication;
+  - 22 findings accepted in SonarQube with a reason, mostly the table's deliberate ARIA grid.
+
+### Known limits
+
+- The quality gate's new-code coverage condition stands at 43.7% against 50%. The interface is covered by the browser tests, which SonarQube does not measure.
+
 ## 0.3.0 (2026-11-19)
 
 A P1 alarm, keyboard actions, a query language, shareable links, lanes, response times, maintenance windows and Operations widgets. Everything stays within Jira Service Management Operations.
@@ -37,18 +77,14 @@ Restart the application. Preferences saved in the browser are kept. To create an
 ### Changed
 
 - When Jira refuses a write, its reason is now shown (shortened, never logged).
-- Code quality: all 365 SonarQube code smells resolved without changing behaviour or appearance (27 functions split below the complexity threshold, read-only props, no nested ternaries, semantic elements where they are drop-in). Behaviour was checked against the old code side by side, with 36 new unit tests, and by screenshot and layout comparisons.
-- A crash in "New maintenance" when "Start later" was ticked and the start time cleared while confirming.
-- SonarQube findings fixed: table rows handle their keys themselves, regular expressions that could backtrack on long input replaced with loops, cryptographic random numbers and SHA-256 where Math.random and SHA-1 were used, a missing sort comparison and a missing `reduce` start value. The demo data is unchanged.
 - Closed alerts get their extra properties too (up to ten per run, after the open ones), so their service and customers no longer fall back to the entity. Known properties stay visible while an alert changes.
 - In demo mode, acknowledging sets the owner and unacknowledging clears it, as Jira does.
 - The demo data has runbook links and custom actions on some alerts.
 
 ### Tested
 
-- 189 unit tests.
+- 153 unit tests.
 - `npm run e2e`: 13 browser tests in demo mode, no console errors.
-- SonarQube (Community Build 26.6): 0 bugs, 0 vulnerabilities, 0 code smells, 0 open security hotspots, A ratings for security, reliability and maintainability, 0% duplication. 22 findings are accepted in Sonar with a reason (mostly the table's deliberate ARIA grid). The gate's new-code coverage condition is at 43.7% of 50%: the interface is tested by the browser tests, which Sonar does not measure.
 - `npm run e2e:live` against the trial site (Premium trial): 4 round-trip tests pass, including a custom action ("Executed action: Run diagnostics").
 - The simulator ran on the trial site; the heartbeat expired and Jira raised its alert, which the Heartbeats widget and the table show.
 - Also on the trial site: Escalate to next, team, schedule and escalation responders, and creating and ending a maintenance window.
