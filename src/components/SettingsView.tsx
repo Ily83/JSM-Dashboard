@@ -607,6 +607,10 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
             <dl className="grid grid-cols-[150px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
               <dt className="text-muted">Mode</dt>
               <dd>{modeLabel(status)}</dd>
+              {status.oauth && <>
+                <dt className="text-muted">Atlassian account</dt>
+                <dd><form method="post" action="/api/auth/logout"><button className={primaryButton} type="submit">Sign out</button></form></dd>
+              </>}
               <dt className="text-muted">Write actions</dt>
               <dd className="break-words">{writeActionsLabel(status)}</dd>
               {status.site && (

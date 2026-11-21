@@ -133,6 +133,7 @@ export interface ExtractionRules {
 }
 
 export interface StatusResponse {
+  oauth?: boolean;
   mode: AppMode;
   /** True when no write action is enabled. */
   readOnly: boolean;

@@ -61,6 +61,10 @@ const EnvSchema = z.object({
   DEMO_ALERT_COUNT: int(0, 0, 50_000),
 
   JIRA_SITE_URL: text,
+  JIRA_AUTH_MODE: text.pipe(z.enum(['basic', 'oauth']).optional()),
+  JIRA_OAUTH_CLIENT_ID: text,
+  JIRA_OAUTH_CLIENT_SECRET: text,
+  JIRA_OAUTH_REDIRECT_URI: text,
   JIRA_CLOUD_ID: text,
   JIRA_EMAIL: text,
   JIRA_API_TOKEN: text,
@@ -113,7 +117,14 @@ export interface JiraConfig {
   writeActions: ActionId[];
 }
 
+export interface OAuthConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+}
+
 export interface AppConfig {
+  oauth?: OAuthConfig;
   isProduction: boolean;
   host: string;
   port: number;
@@ -193,14 +204,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   let jira: JiraConfig | null = null;
-  if (!demoForced && missing.length === 0) {
+  let oauth: OAuthConfig | undefined;
+  if (!demoForced && e.JIRA_AUTH_MODE === 'oauth') {
+    if (!e.JIRA_SITE_URL || !normaliseSiteUrl(e.JIRA_SITE_URL) || !e.JIRA_OAUTH_CLIENT_ID || !e.JIRA_OAUTH_CLIENT_SECRET)
+      throw new Error('OAuth requires JIRA_SITE_URL, JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_CLIENT_SECRET.');
+    if (e.HOST && !['localhost', '127.0.0.1'].includes(e.HOST)) throw new Error('OAuth mode requires a loopback HOST.');
+    const redirectUri = e.JIRA_OAUTH_REDIRECT_URI ?? `http://localhost:${e.PORT}/api/auth/callback`;
+    if (!/^http:\/\/(?:localhost|127\.0\.0\.1):\d{1,5}\/api\/auth\/callback$/.test(redirectUri) || !URL.canParse(redirectUri))
+      throw new Error('JIRA_OAUTH_REDIRECT_URI must be a local HTTP callback with an explicit port and path /api/auth/callback.');
+    oauth = { clientId: e.JIRA_OAUTH_CLIENT_ID, clientSecret: e.JIRA_OAUTH_CLIENT_SECRET, redirectUri };
+  }
+  if (!demoForced && (oauth || missing.length === 0)) {
     const site = normaliseSiteUrl(e.JIRA_SITE_URL!);
     if (site) {
       jira = {
         ...site,
         cloudId: e.JIRA_CLOUD_ID ?? null,
-        email: e.JIRA_EMAIL!,
-        apiToken: e.JIRA_API_TOKEN!,
+        email: oauth ? '' : e.JIRA_EMAIL!,
+        apiToken: oauth ? '' : e.JIRA_API_TOKEN!,
         alertQuery: e.JIRA_ALERT_QUERY ?? null,
         openQuery: e.JIRA_OPEN_QUERY ?? 'status: open',
         closedQuery: e.JIRA_CLOSED_QUERY ?? 'NOT status: open',
@@ -224,6 +245,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   return {
+    oauth,
     // `npm start` passes --production, which works the same in every shell and operating system.
     isProduction: e.NODE_ENV === 'production' || process.argv.includes('--production'),
     host: e.HOST ?? '127.0.0.1',

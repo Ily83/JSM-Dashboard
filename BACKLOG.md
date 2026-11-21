@@ -46,8 +46,17 @@ Time-of-day, weekday, and business-hours patterns are not planned unless request
 
 ## Standalone app and authentication
 
-- [ ] **Windows desktop app:** Package the dashboard and local backend as a standalone app with an installer, without requiring users to run npm. Evaluate Electron and Tauri, including secure updates and local resource usage.
-- [ ] **OAuth sign-in:** Investigate Atlassian OAuth support and permissions for the Jira Operations APIs used by the app. Implement per-user sign-in, secure token storage and refresh for the desktop app instead of local API-token credentials.
+- [x] **Local browser OAuth sign-in:** Implemented Atlassian 3LO with backend-only in-memory tokens, refresh and session-specific caches. [Setup and scopes](README.md#sign-in-with-atlassian-oauth).
+- [ ] **Validate OAuth while the dedicated test site has Premium (until December 2026):** Start read-only: check consent, alert and attachment reads, refresh, and sign-out. Then enable only assign and snooze and try them on a disposable test alert as the signed-in user. Confirm the exact trial end date and run these checks before expiry. Separately, verify Windows SSO using an Entra-federated Atlassian account in a managed Windows work profile; Premium alone does not configure SSO. The local integration tests use a fake provider.
+- [ ] **Next: Windows standalone portable app.** Unzip on a clean Windows PC, launch without installing Node or npm, and open the dashboard in the work browser for SSO. Verify startup, shutdown, OAuth callback, and upgrading to a new folder without losing settings. Track signing and managed distribution separately from the first portable build.
+  - Portable x64 ZIP build and launcher implemented; see [build and verification instructions](README.md#windows-portable-app). Clean-Windows acceptance and signing remain open.
+  - Distribution decision: Atlassian's documented code exchange requires a client secret. Keep an organization-owned secret on a confidential backend for a distributed app; never embed it in the installer. If the dashboard moves into an embedded window, sign in in the system browser and design a one-time, instance-bound handoff: the renderer does not share the browser's cookies. Only add persistent login if needed, with user-bound Windows credential protection.
+
+## Operator workflows and AI assistance
+
+- [ ] **Operator-configured workflows:** Let an operator draft a trigger, conditions and action, then preview which loaded alerts match. Example: a new P1 for the operator's team sends a notification. Use Jira Automation for unattended execution so rules keep running when the dashboard is closed. Verify which rule-management APIs are available; if publishing is unavailable, hand off to Jira's rule editor. Enabling or changing shared rules requires Jira permissions.
+- [ ] **Local agent harness:** Let the operator connect a locally hosted agent or an organization-managed endpoint and choose which tools and alert fields it receives. Support approved MCP servers, including the [Microsoft Learn MCP server](https://learn.microsoft.com/api/mcp) for Azure documentation. Documentation lookups should use service names and symptoms rather than raw customer alert payloads.
+- [ ] **AI-assisted investigation:** From an alert, ask “What should I check first?” Show likely causes, the evidence for each, ordered diagnostic checks, and possible fixes with links to the relevant runbook or Microsoft Learn page. Distinguish observations from hypotheses and flag missing evidence. Suggestions are read-only; the operator decides what to do.
 
 ## Ideas from similar projects
 
@@ -71,4 +80,4 @@ Compared with karma, Alerta, Keep, Siren and jsm-tui on 2026-11-19. Scope: Jira 
 - [ ] Names for schedule and escalation responders in live mode (the lists are already loaded for the pickers).
 - [ ] Decide whether "assign" may keep using the general Jira people search (`/rest/api/3/user/search`, `/rest/api/3/myself`), or should offer only the alert's responders, to stay strictly within JSM.
 
-Not planned: several Jira sites in one console, application-managed per-person roles, correlating alerts into incidents, automated workflows.
+Not planned: several Jira sites in one console, application-managed per-person roles, correlating alerts into incidents, or an always-on automation engine in the desktop app.

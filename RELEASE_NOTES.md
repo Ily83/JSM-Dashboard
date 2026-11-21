@@ -2,6 +2,12 @@
 
 Newest release first. Each release lists what changed, how to install or update, and what is known not to work yet.
 
+## 0.4.0 (2026-11-21)
+
+- **Windows x64 portable app:** Extract the full ZIP and double-click `Alert Center.exe`. No installation or npm required. A SHA-256 checksum accompanies the download.
+- **Atlassian OAuth:** Sign in from your work browser. Federated accounts can reuse Windows SSO, subject to organization policy. See the [setup instructions](README.md#sign-in-with-atlassian-oauth).
+- **Verification:** The packaged backend passed demo and signed-out OAuth smoke tests on Linux. The launcher is unsigned; native Windows startup and live SSO still need validation.
+
 ## 0.3.2 (2026-11-20)
 
 Fixes from a design and accessibility review (impeccable audit and critique) of the context menu, drag-to-select, bulk actions and server-side History analysis added in 0.3.1's follow-ups (PRs #3 and #4).

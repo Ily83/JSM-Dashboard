@@ -77,9 +77,11 @@ export function createApp(
   app.disable('x-powered-by');
   app.use(
     helmet({
+      // OAuth logout is a same-origin form POST; retain its Origin even on a localhost HTTP dashboard.
+      ...(config.oauth ? { referrerPolicy: { policy: 'same-origin' as const }, strictTransportSecurity: false } : {}),
       // The Vite dev server injects inline scripts; the strict policy applies to the production build.
       contentSecurityPolicy: config.isProduction
-        ? { directives: { defaultSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:'] } }
+        ? { directives: { defaultSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:'], ...(config.oauth ? { upgradeInsecureRequests: null } : {}) } }
         : false,
     }),
   );
@@ -132,6 +134,7 @@ export function createApp(
 
   api.get('/status', (_req, res) => {
     const body: StatusResponse = {
+      oauth: Boolean(config.oauth),
       mode: config.mode,
       readOnly: !actions.enabled,
       writes: { enabled: actions.enabled, actions: config.writeActions },

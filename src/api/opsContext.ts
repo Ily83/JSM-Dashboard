@@ -10,7 +10,7 @@ import type {
 import type { WidgetId } from '../config/widgets';
 import { useStore } from '../lib/store';
 import { dashboardStore } from '../state/dashboard';
-import { ApiRequestError } from './client';
+import { getJson } from './client';
 
 /**
  * Maintenance windows, heartbeats and on-call. Each list is requested only
@@ -19,24 +19,7 @@ import { ApiRequestError } from './client';
  */
 
 async function request<T>(url: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(url, { ...init, signal, headers: { Accept: 'application/json', ...init.headers } });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error;
-    throw new ApiRequestError('The Alert Center backend is not reachable. Is the server running?', null);
-  }
-  if (!response.ok) {
-    let message = `The backend answered with status ${response.status}.`;
-    try {
-      const body: unknown = await response.json();
-      if (body && typeof body === 'object' && 'error' in body && typeof body.error === 'string') message = body.error;
-    } catch {
-      // not JSON
-    }
-    throw new ApiRequestError(message, response.status);
-  }
-  return (await response.json()) as T;
+  return getJson<T>(url, signal, init);
 }
 
 /** Same header as alert actions: the backend refuses writes without it. */

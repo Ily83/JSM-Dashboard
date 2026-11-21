@@ -26,7 +26,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-async function getJson<T>(url: string, signal?: AbortSignal, init: RequestInit = {}): Promise<T> {
+export async function getJson<T>(url: string, signal?: AbortSignal, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
     response = await fetch(url, { ...init, signal, headers: { Accept: 'application/json', ...init.headers } });
@@ -35,6 +35,9 @@ async function getJson<T>(url: string, signal?: AbortSignal, init: RequestInit =
     throw new ApiRequestError('The Alert Center backend is not reachable. Is the server running?', null);
   }
   if (!response.ok) {
+    if (response.status === 401 && response.headers.get('X-Alert-Center-Login') === '1') {
+      window.location.replace('/api/auth/login');
+    }
     let message = `The backend answered with status ${response.status}.`;
     try {
       const body: unknown = await response.json();

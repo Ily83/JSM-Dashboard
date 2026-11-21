@@ -58,7 +58,7 @@ import {
  *     https://{site}/rest/api/3/user/search            Jira platform: find users (assign, responders)
  *     https://{site}/rest/api/3/myself                 Jira platform: the account behind the token
  *
- * Authentication is HTTP Basic with an Atlassian account email and API token.
+ * OAuth uses the ex/jira gateway; basic authentication uses the direct endpoints.
  */
 
 const API_ROOT = 'https://api.atlassian.com/jsm/ops/api';
@@ -318,9 +318,20 @@ export class JiraClient {
     private readonly config: JiraConfig,
     private readonly maxConcurrency = 4,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly bearer?: { token(): Promise<string>; invalidate(): void },
   ) {
+    if (!bearer && (!config.email || !config.apiToken)) throw new Error('Jira basic credentials are missing.');
+    if (bearer && !config.cloudId) throw new Error('OAuth requires an authorized site.');
     const credentials = `${config.email}:${config.apiToken}`;
     this.authorization = `Basic ${Buffer.from(credentials).toString('base64')}`;
+  }
+
+  private get platformRoot(): string {
+    return this.bearer ? `https://api.atlassian.com/ex/jira/${encodeURIComponent(this.config.cloudId!)}` : this.config.siteUrl;
+  }
+
+  private async opsRoot(): Promise<string> {
+    return this.bearer ? `${this.platformRoot}/jsm/ops/api` : `${API_ROOT}/${encodeURIComponent(await this.cloudId())}`;
   }
 
   async listAlerts(params: ListAlertsParams): Promise<AlertPage> {
@@ -423,7 +434,7 @@ export class JiraClient {
 
   /** Jira platform "Find users". Needs the Browse users and groups permission. */
   async searchUsers(query: string): Promise<DirectoryUser[]> {
-    const url = new URL(`${this.config.siteUrl}/rest/api/3/user/search`);
+    const url = new URL(`${this.platformRoot}/rest/api/3/user/search`);
     url.searchParams.set('query', query);
     url.searchParams.set('maxResults', '20');
     const users = await this.request(url.toString(), PlatformUsersSchema, { purpose: 'read' });
@@ -434,7 +445,7 @@ export class JiraClient {
 
   /** Jira platform "Get current user": the account the API token belongs to. */
   async myself(): Promise<DirectoryUser> {
-    const user = await this.request(`${this.config.siteUrl}/rest/api/3/myself`, PlatformUserSchema, { purpose: 'read' });
+    const user = await this.request(`${this.platformRoot}/rest/api/3/myself`, PlatformUserSchema, { purpose: 'read' });
     return { accountId: user.accountId, displayName: user.displayName ?? user.accountId };
   }
 
@@ -593,8 +604,7 @@ export class JiraClient {
   }
 
   private async write<S extends z.ZodType>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body: unknown, schema: S): Promise<z.infer<S>> {
-    const cloudId = await this.cloudId();
-    const url = `${API_ROOT}/${encodeURIComponent(cloudId)}${path}`;
+    const url = `${await this.opsRoot()}${path}`;
     return this.request(url, schema, { method, body, purpose: 'write' });
   }
 
@@ -615,8 +625,7 @@ export class JiraClient {
     query: Record<string, string | number | undefined> = {},
     purpose: Purpose = 'sync',
   ): Promise<z.infer<S>> {
-    const cloudId = await this.cloudId();
-    const url = new URL(`${API_ROOT}/${encodeURIComponent(cloudId)}${path}`);
+    const url = new URL(`${await this.opsRoot()}${path}`);
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== '') url.searchParams.set(key, String(value));
     }
@@ -685,13 +694,14 @@ export class JiraClient {
     const safePath = `${method} ${new URL(url).pathname.replace(/^\/jsm\/ops\/api\/[^/]+\//, '/jsm/ops/api/{cloudId}/')}`;
     let response: Response;
     this.requestCount += 1;
+    const authorization = this.bearer ? `Bearer ${await this.bearer.token()}` : this.authorization;
     try {
       response = await this.fetchImpl(url, {
         method,
         headers: {
           Accept: 'application/json',
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-          ...(authenticated ? { Authorization: this.authorization } : {}),
+          ...(authenticated ? { Authorization: authorization } : {}),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         // Never follow a redirect with credentials attached.
@@ -705,6 +715,11 @@ export class JiraClient {
     }
 
     log.debug('jira request', { path: safePath, status: response.status, ms: Date.now() - started });
+    if (response.status === 401 && this.bearer) {
+      this.bearer.invalidate();
+      await response.body?.cancel();
+      throw new JiraApiError('auth', 401, 'Your Jira authorization expired. Sign in again.');
+    }
     if (!response.ok) throw await rejection(response, purpose, safePath);
     return parseResponse(await readJson(response), schema, response.status, safePath);
   }
