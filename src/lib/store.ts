@@ -11,6 +11,7 @@ import { getPreferenceStorage } from './storage';
 export interface PersistentStore<T> {
   get(): T;
   set(next: T | ((current: T) => T)): void;
+  save(): boolean;
   reset(): void;
   subscribe(listener: () => void): () => void;
 }
@@ -48,27 +49,28 @@ export function createPersistentStore<T>(
     return state as T;
   }
 
+  function save(): boolean {
+    clearTimeout(writeTimer);
+    writeTimer = undefined;
+    return !suspended && getPreferenceStorage().write(key, current()) !== false;
+  }
+
   function persist(): void {
     clearTimeout(writeTimer);
     // Debounced: dragging a column edge changes state on every mouse move.
-    writeTimer = setTimeout(() => {
-      writeTimer = undefined;
-      if (!suspended) getPreferenceStorage().write(key, state);
-    }, 150);
+    writeTimer = setTimeout(save, 150);
   }
 
   // Do not lose the last change when the tab is closed within the debounce window.
   if (globalThis.window !== undefined) {
     globalThis.addEventListener('pagehide', () => {
-      if (writeTimer !== undefined && loaded && !suspended) {
-        clearTimeout(writeTimer);
-        getPreferenceStorage().write(key, state);
-      }
+      if (writeTimer !== undefined) save();
     });
   }
 
   return {
     get: current,
+    save,
     set(next) {
       const before = current();
       const value = typeof next === 'function' ? (next as (value: T) => T)(before) : next;

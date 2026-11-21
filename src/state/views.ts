@@ -194,6 +194,8 @@ export function openSection(section: SectionId): void {
   const data = viewsStore.get();
   if (data.activeViewId !== null) {
     viewsStore.set({ ...data, activeViewId: null, current: EMPTY_VIEW_STATE() });
+  } else if (section === 'all' && !deepEqual(data.current.sorting, DEFAULT_SORTING)) {
+    patchCurrentView({ sorting: DEFAULT_SORTING });
   }
   navigate({ page: 'alerts', section, alertId: null });
 }

@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import type { ActionId, AlertAction } from '../../shared/actions';
 import type { Alert, SyncMeta } from '../../shared/types';
@@ -25,6 +25,12 @@ export interface AlertsData {
 }
 
 const ALERTS_KEY = ['alerts'] as const;
+const forceNextAlerts = new WeakSet<QueryClient>();
+
+export function refreshAlerts(queryClient: QueryClient): Promise<void> {
+  forceNextAlerts.add(queryClient);
+  return queryClient.invalidateQueries({ queryKey: ALERTS_KEY });
+}
 
 /** Milliseconds between polls: the auto-refresh setting, else every minute when polling must continue, else none. */
 function pollInterval(refreshSeconds: number, keepPollingInBackground: boolean): number | false {
@@ -44,15 +50,13 @@ function pollInterval(refreshSeconds: number, keepPollingInBackground: boolean):
  */
 export function useAlerts(refreshSeconds: number, enabled = true, keepPollingInBackground = false) {
   const queryClient = useQueryClient();
-  const forceNext = useRef(false);
 
   const query = useQuery<AlertsData>({
     queryKey: ALERTS_KEY,
     enabled,
     queryFn: async ({ signal }) => {
       const previous = queryClient.getQueryData<AlertsData>(ALERTS_KEY);
-      const force = forceNext.current;
-      forceNext.current = false;
+      const force = forceNextAlerts.delete(queryClient);
       const response = await fetchAlerts({ knownVersion: previous?.version, force }, signal);
       if (response.unchanged && previous) return { ...previous, meta: response.meta };
       return { version: response.version, alerts: response.alerts, meta: response.meta };
@@ -67,12 +71,10 @@ export function useAlerts(refreshSeconds: number, enabled = true, keepPollingInB
     retry: 1,
   });
 
-  const refetch = query.refetch;
   /** Manual refresh: asks the backend to synchronise now instead of using its cache. */
   const refresh = useCallback(() => {
-    forceNext.current = true;
-    void refetch();
-  }, [refetch]);
+    void refreshAlerts(queryClient);
+  }, [queryClient]);
 
   return { ...query, refresh };
 }
@@ -124,7 +126,7 @@ function useStableSet(list: readonly ActionId[]): ReadonlySet<ActionId> {
 
 /**
  * Puts the alert returned after an action into the cached list straight
- * away, then lets the next poll (asked for now) bring the authoritative list.
+ * away. The caller requests a list sync once per action or bulk batch.
  */
 export function applyActionResult(queryClient: QueryClient, id: string, response: ActionResponse): void {
   const updated = response.alert;
@@ -135,7 +137,6 @@ export function applyActionResult(queryClient: QueryClient, id: string, response
       return { ...data, alerts: data.alerts.map((a) => (a.id === id ? row : a)) };
     });
   }
-  void queryClient.invalidateQueries({ queryKey: ALERTS_KEY });
   void queryClient.invalidateQueries({ queryKey: ['alert', id] });
   void queryClient.invalidateQueries({ queryKey: ['alert-notes', id] });
   void queryClient.invalidateQueries({ queryKey: ['alert-logs', id] });
@@ -146,7 +147,10 @@ export function useAlertAction(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (action: AlertAction) => postAction(id, action),
-    onSuccess: (response) => applyActionResult(queryClient, id, response),
+    onSuccess: (response) => {
+      applyActionResult(queryClient, id, response);
+      void refreshAlerts(queryClient);
+    },
   });
 }
 

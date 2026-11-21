@@ -1,4 +1,4 @@
-import { expect, rows, search, test } from '../fixtures';
+import { expect, listAlerts, rows, search, test } from '../fixtures';
 
 test.describe('alert list', () => {
   test('loads KPIs and the table', async ({ page }) => {
@@ -6,6 +6,24 @@ test.describe('alert list', () => {
     await expect(rows(page).first()).toBeVisible();
     await expect(page.getByText('Demo mode')).toBeVisible();
     await expect(page.locator('[data-widget=kpiActive]')).toContainText(/\d+/);
+  });
+
+  test('All Alerts defaults to newest first without overriding an explicit sort', async ({ page }) => {
+    await page.goto('/#/active?sort=createdAt');
+    const created = page.getByRole('columnheader').filter({ has: page.getByRole('button', { name: 'Created', exact: true }) });
+    await expect(created).toHaveAttribute('aria-sort', 'ascending');
+    const [newest] = await listAlerts(page);
+    expect(newest).toBeDefined();
+
+    await page.locator('a[href="#/all"]').click();
+    await expect(created).toHaveAttribute('aria-sort', 'descending');
+    await expect(rows(page).first()).toContainText(newest.summary);
+
+    await page.goto('/#/all?sort=createdAt');
+    await expect(created).toHaveAttribute('aria-sort', 'ascending');
+    await page.goto('/#/all');
+    await expect(created).toHaveAttribute('aria-sort', 'descending');
+    await expect(rows(page).first()).toContainText(newest.summary);
   });
 
   test('search queries filter, and an invalid one shows an error without breaking the list', async ({ page }) => {

@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { ArrowDown, ArrowUp, Copy, Download, Play, RotateCcw, Star, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, Copy, Download, Play, RotateCcw, Save, Star, Trash2, Upload } from 'lucide-react';
 import { ACTION_IDS, ACTION_LABEL } from '../../shared/actions';
 import type { Alert, StatusResponse } from '../../shared/types';
 import { trimChar } from '../lib/id';
@@ -12,7 +12,7 @@ import { cn } from '../lib/cn';
 import { formatAbsolute } from '../lib/format';
 import { MAX_IMPORT_BYTES, parseImportFile, planViewImport, type ConflictChoice, type ImportPayload } from '../lib/preferencesTransfer';
 import { getPreferenceStorage } from '../lib/storage';
-import { suspendPersistence, useStore } from '../lib/store';
+import { deepEqual, suspendPersistence, useStore } from '../lib/store';
 import {
   DEFAULT_DASHBOARD,
   dashboardStore,
@@ -35,6 +35,7 @@ import {
   viewsStore,
 } from '../state/views';
 import { CustomerBadge } from './ui/badges';
+import { primaryButton } from './ui/buttons';
 
 /**
  * Settings. Every control here writes to one of the preference stores, and
@@ -243,6 +244,16 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
   const dashboard = useStore(dashboardStore);
   const views = useStore(viewsStore);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [saveResult, setSaveResult] = useState<'saved' | 'failed' | null>(null);
+  const [savedSettings, setSavedSettings] = useState(() => ({ prefs, table, dashboard, views }));
+  const hasChanges = !deepEqual(savedSettings, { prefs, table, dashboard, views });
+
+  const saveSettings = () => {
+    const results = [prefsStore.save(), tableLayoutStore.save(), dashboardStore.save(), viewsStore.save()];
+    const saved = results.every(Boolean);
+    if (saved) setSavedSettings({ prefs, table, dashboard, views });
+    setSaveResult(saved ? 'saved' : 'failed');
+  };
 
   const refresh = prefs.refreshSeconds ?? status?.defaultRefreshSeconds ?? 60;
   const refreshOptions = [...new Set([...REFRESH_OPTIONS, refresh])].sort((a, b) => a - b);
@@ -260,6 +271,15 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="sticky top-0 z-10 flex min-h-11 items-center justify-end gap-3 border-b border-line bg-panel px-4 py-1.5">
+        <output className={cn('text-xs', saveResult === 'failed' ? 'text-crit' : 'text-muted')}>
+          {saveResult === 'failed' ? 'Could not save settings in this browser.' : saveResult === 'saved' && !hasChanges ? 'Settings saved in this browser.' : ''}
+        </output>
+        <button type="button" className={primaryButton} disabled={!hasChanges && saveResult !== 'failed'} onClick={saveSettings}>
+          <Save size={14} aria-hidden />
+          Save settings
+        </button>
+      </div>
       <div className="mx-auto grid max-w-5xl grid-cols-[minmax(0,1fr)] gap-3 p-4 lg:grid-cols-2">
         <Card id="appearance" title="Appearance">
           <Row label="Theme">

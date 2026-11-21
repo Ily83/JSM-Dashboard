@@ -9,7 +9,9 @@ test.describe('actions', () => {
     const p = panel(page);
     await expect(p.locator('h2')).toHaveText(target!.summary);
 
+    const refresh = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/alerts' && new URL(request.url()).searchParams.get('refresh') === '1');
     await p.getByRole('button', { name: 'Acknowledge' }).click();
+    await refresh;
     await expect(p.getByRole('status')).toContainText('Alert acknowledged');
     await p.getByRole('button', { name: 'Unacknowledge' }).click();
     await expect(p.getByRole('status')).toContainText('Alert unacknowledged');
@@ -108,6 +110,11 @@ test.describe('actions', () => {
     const button = bar.getByRole('button', { name: /^Acknowledge/ });
     const fits = Number((await button.innerText()).replace(/\D/g, ''));
     test.skip(fits === 0, 'all selected alerts were already acknowledged');
+    let refreshes = 0;
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === '/api/alerts' && url.searchParams.get('refresh') === '1') refreshes += 1;
+    });
     await button.click();
     // One alert is acknowledged at once; more than one asks first.
     if (fits > 1) {
@@ -115,6 +122,7 @@ test.describe('actions', () => {
       await bar.getByRole('button', { name: 'Confirm' }).click();
     }
     await expect(bar).toContainText(`${fits} alert${fits === 1 ? '' : 's'} acknowledged`);
+    await expect.poll(() => refreshes).toBe(1);
     if (fits < 6) await expect(bar).toContainText(`${6 - fits} skipped`);
     // Focus stays on the button that started it.
     await expect(button).toBeFocused();
@@ -300,11 +308,22 @@ test.describe('actions', () => {
 
     // The next menu works without dismissing the outcome first.
     await rows(page).first().click({ button: 'right' });
-    await expect(menu.getByRole('menuitem', { name: /^Acknowledge/ })).toBeEnabled();
+    const acknowledge = menu.getByRole('menuitem', { name: /^Acknowledge/ });
+    await expect(acknowledge).toBeEnabled();
+    const secondWrite = page.waitForResponse((response) =>
+      response.request().method() === 'POST' && response.url().endsWith('/actions') && response.ok(),
+    );
+    await acknowledge.click();
+    await secondWrite;
+    await expect(popup).toHaveCount(0);
+    await expect(bar).toContainText('1 alert acknowledged');
+    expect(writes).toBe(2);
+
+    await rows(page).first().click({ button: 'right' });
     await menu.getByRole('menuitem', { name: 'Open alert details' }).click();
     await expect(panel(page)).toBeVisible();
     await expect(rows(page).first()).toBeFocused();
-    expect(writes).toBe(1);
+    expect(writes).toBe(2);
   });
 
   test('context menu assigns one alert at once and asks before assigning several', async ({ page }) => {
@@ -452,6 +471,31 @@ test.describe('actions', () => {
     await menu.getByRole('button', { name: 'Run', exact: true }).click();
     const bar = page.locator('[aria-label="Bulk actions"]');
     await expect(bar).toContainText(`“${target.actions[0]}” run on 1 alert`);
+  });
+
+  test('modifier-clicks select ranges or toggle rows without opening details', async ({ page }) => {
+    await page.goto('/#/active');
+    const cell = (index: number) => rows(page).nth(index).locator('.at-cell:not(.at-select)').first();
+    const checked = page.locator('.at-row[data-checked]');
+
+    await cell(1).click({ modifiers: ['Control'] });
+    await expect(checked).toHaveCount(1);
+    await cell(4).click({ modifiers: ['Shift'] });
+    await expect(checked).toHaveCount(4);
+    for (let index = 1; index <= 4; index += 1) {
+      await expect(rows(page).nth(index)).toHaveAttribute('data-checked', 'true');
+    }
+
+    await cell(6).click({ modifiers: ['Meta'] });
+    await expect(checked).toHaveCount(5);
+    await cell(6).click({ modifiers: ['Control'] });
+    await expect(checked).toHaveCount(4);
+    await cell(7).click({ modifiers: ['Control', 'Shift'] });
+    await expect(checked).toHaveCount(6);
+    await expect(panel(page)).toHaveCount(0);
+
+    await cell(0).click();
+    await expect(panel(page)).toBeVisible();
   });
 
   test('rectangle selection adds with Control and scrolls at the table edge', async ({ page }) => {

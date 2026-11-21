@@ -30,6 +30,7 @@ export class AlertStore {
   private list: Alert[] = [];
   private version = 'none';
   private inFlight: Promise<void> | null = null;
+  private readonly actionUpdates = new Map<string, AlertDetail | null>();
   private readonly detailRequests = new Map<string, Promise<AlertDetail | null>>();
 
   private lastSyncAt: number | null = null;
@@ -110,6 +111,7 @@ export class AlertStore {
    */
   async refreshAlert(id: string): Promise<AlertDetail | null> {
     const detail = await this.source.loadDetail(id);
+    if (this.snapshot || this.inFlight) this.actionUpdates.set(id, detail);
     if (this.snapshot) {
       if (detail) this.snapshot.alerts.set(id, detail);
       else this.snapshot.alerts.delete(id);
@@ -141,7 +143,14 @@ export class AlertStore {
     const started = Date.now();
     this.lastAttemptAt = started;
     try {
-      this.snapshot = await this.source.sync(this.snapshot);
+      const snapshot = await this.source.sync(this.snapshot);
+      // The list can lag behind the post-action detail, especially during an overlapping sync.
+      for (const [id, detail] of this.actionUpdates) {
+        if (!detail) snapshot.alerts.delete(id);
+        else if ((snapshot.alerts.get(id)?.updatedAt ?? -Infinity) <= detail.updatedAt) snapshot.alerts.set(id, detail);
+      }
+      this.actionUpdates.clear();
+      this.snapshot = snapshot;
       this.rebuildList();
       this.lastSyncAt = Date.now();
       this.lastError = null;

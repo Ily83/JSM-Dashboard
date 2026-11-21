@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Check, CheckCheck, CircleCheck, Ellipsis, ListChecks, Loader2, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { ACTION_LABEL, BULK_ACTION_IDS, type ActionId, type AlertAction, type BulkActionId } from '../../../shared/actions';
 import type { Alert } from '../../../shared/types';
-import { applyActionResult } from '../../api/hooks';
+import { applyActionResult, refreshAlerts } from '../../api/hooks';
 import { postAction } from '../../api/client';
 import { cn } from '../../lib/cn';
 import { button, confirmCloseButton, iconButton, primaryButton, quietButton } from '../ui/buttons';
@@ -217,6 +217,7 @@ export function BulkActionBar({
       },
       (done) => setPhase({ kind: 'running', action, total: targets.length, done }),
     );
+    if (result.ok > 0 || result.pending > 0) void refreshAlerts(queryClient);
     setPhase({ kind: 'idle' });
     setOutcome({ id: Date.now(), request, name, skipped, ...result });
     if (result.failures.length === 0 && currentSelection.current === startedWith) onClear();

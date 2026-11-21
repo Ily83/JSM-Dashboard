@@ -37,3 +37,22 @@ test('settings show the connection, write actions and a preferences backup', asy
   expect(Object.keys(backup.data)).toEqual(expect.arrayContaining(['prefs:v1', 'views:v1']));
   expect(text).not.toMatch(/apiToken|JIRA_|ATATT/);
 });
+
+test('Save settings stays visible while scrolling and persists preferences', async ({ page }) => {
+  await page.goto('/#/settings');
+  const save = page.getByRole('button', { name: 'Save settings' });
+  await expect(save).toBeDisabled();
+  await page.getByRole('radio', { name: 'Light', exact: true }).click();
+  await expect(save).toBeEnabled();
+  await page.getByRole('radio', { name: 'Dark', exact: true }).click();
+  await expect(save).toBeDisabled();
+  await page.getByRole('radio', { name: 'Light', exact: true }).click();
+  await page.getByRole('heading', { name: 'Reset', exact: true }).scrollIntoViewIfNeeded();
+  await expect(save).toBeInViewport();
+  await save.click();
+  await expect(page.getByText('Settings saved in this browser.')).toBeVisible();
+  await expect(save).toBeDisabled();
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(save).toBeDisabled();
+});

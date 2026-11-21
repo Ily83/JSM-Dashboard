@@ -44,6 +44,11 @@ Time-of-day, weekday, and business-hours patterns are not planned unless request
 - [x] **Saved History investigations:** Save and reopen a date range, customer and tag filters, and the selected breakdown. Carry those filters into the alert list when drilling down from a chart.
 - [x] **Group repeats in the live table:** Offer expandable alert groups with separate counts for distinct Jira records and total Jira occurrences. Keep individual alerts accessible and reuse the grouping rules from Recurring alerts.
 
+## Standalone app and authentication
+
+- [ ] **Windows desktop app:** Package the dashboard and local backend as a standalone app with an installer, without requiring users to run npm. Evaluate Electron and Tauri, including secure updates and local resource usage.
+- [ ] **OAuth sign-in:** Investigate Atlassian OAuth support and permissions for the Jira Operations APIs used by the app. Implement per-user sign-in, secure token storage and refresh for the desktop app instead of local API-token credentials.
+
 ## Ideas from similar projects
 
 Compared with karma, Alerta, Keep, Siren and jsm-tui on 2026-11-19. Scope: Jira Service Management only.
@@ -66,4 +71,4 @@ Compared with karma, Alerta, Keep, Siren and jsm-tui on 2026-11-19. Scope: Jira 
 - [ ] Names for schedule and escalation responders in live mode (the lists are already loaded for the pickers).
 - [ ] Decide whether "assign" may keep using the general Jira people search (`/rest/api/3/user/search`, `/rest/api/3/myself`), or should offer only the alert's responders, to stay strictly within JSM.
 
-Not planned: several Jira sites in one console, per-person sign-in with roles, correlating alerts into incidents, automated workflows.
+Not planned: several Jira sites in one console, application-managed per-person roles, correlating alerts into incidents, automated workflows.

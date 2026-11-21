@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { JiraConfig } from '../server/config';
 import { JiraApiError, JiraClient } from '../server/jira/client';
 import { JiraSource } from '../server/jira/source';
@@ -270,6 +270,24 @@ describe('Jira integration (against a fake API)', () => {
 });
 
 describe('AlertStore', () => {
+  it('does not replace a post-action refresh with an older in-flight sync', async () => {
+    const alerts = makeAlerts(1);
+    const jira = fakeJira({ alerts });
+    const source = new JiraSource(config, rules, new JiraClient(config, 4, jira.fetchImpl));
+    const store = new AlertStore(source, 0);
+    await store.getAlerts();
+
+    const stale = await source.sync(null);
+    let finish!: (snapshot: typeof stale) => void;
+    vi.spyOn(source, 'sync').mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const syncing = store.getAlerts({ force: true });
+
+    alerts[0].acknowledged = true;
+    expect(await store.refreshAlert(alerts[0].id)).toMatchObject({ acknowledged: true });
+    finish(stale);
+    expect((await syncing).alerts).toMatchObject([{ acknowledged: true }]);
+  });
+
   it('caches within the TTL, shares one sync between callers and reports unchanged versions', async () => {
     const jira = fakeJira({ alerts: makeAlerts(3) });
     const source = new JiraSource(config, rules, new JiraClient(config, 4, jira.fetchImpl));

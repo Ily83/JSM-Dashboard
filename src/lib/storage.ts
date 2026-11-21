@@ -11,7 +11,8 @@ export interface PreferenceStorage {
   /** Optional asynchronous preload, awaited once before the application renders. */
   hydrate?(): Promise<void>;
   read(key: string): unknown;
-  write(key: string, value: unknown): void;
+  /** Returns false if the write failed. */
+  write(key: string, value: unknown): boolean | void;
   remove(key: string): void;
 }
 
@@ -29,8 +30,9 @@ export const localStorageAdapter: PreferenceStorage = {
   write(key, value) {
     try {
       localStorage.setItem(NAMESPACE + key, JSON.stringify(value));
+      return true;
     } catch {
-      // Storage full or blocked: the preference is simply not remembered.
+      return false;
     }
   },
   remove(key) {

@@ -32,8 +32,8 @@ import { arrowToggles, checkState, countSelected, dragMode, navigationTarget, ro
  *    state; sorting belongs to the current view. Both are persisted.
  *
  * Optional features
- *  - Selection: a checkbox column (Shift+click selects a range, X toggles
- *    the focused row) for bulk actions. Dragging from the checkbox column,
+ *  - Selection: checkboxes, Shift+click for a range, Ctrl/Cmd+click to
+ *    toggle a row, and X to toggle the focused row. Dragging from the checkbox column,
  *    or mostly up or down from anywhere in a row, draws a selection
  *    rectangle (Ctrl adds, Esc cancels); dragging sideways selects text.
  *  - Alert menu: right-click, Shift+F10 or the ContextMenu key on a row.
@@ -199,7 +199,7 @@ export const AlertTable = memo(function AlertTable({
   const activityEnd = useMemo(() => Date.now(), [rows]);
 
   // ---- Selection -----------------------------------------------------------
-  const lastChecked = useRef<number | null>(null);
+  const selectionAnchor = useRef<string | null>(null);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const selectionRef = useRef(selection);
@@ -418,8 +418,9 @@ export const AlertTable = memo(function AlertTable({
       const target = list[index];
       if (!target) return;
       const turnOn = !alertsOfItem(target).every((a) => current.has(a.id));
-      const from = range && lastChecked.current !== null ? Math.min(lastChecked.current, index) : index;
-      const to = range && lastChecked.current !== null ? Math.max(lastChecked.current, index) : index;
+      const anchor = range ? list.findIndex((item) => itemKey(item) === selectionAnchor.current) : -1;
+      const from = anchor < 0 ? index : Math.min(anchor, index);
+      const to = anchor < 0 ? index : Math.max(anchor, index);
       const next = new Set(current);
       for (let i = from; i <= to; i += 1) {
         for (const alert of alertsOfItem(list[i])) {
@@ -427,7 +428,7 @@ export const AlertTable = memo(function AlertTable({
           else next.delete(alert.id);
         }
       }
-      lastChecked.current = index;
+      selectionAnchor.current = itemKey(target);
       onSelectionChange(next);
     },
     [onSelectionChange],
@@ -542,6 +543,46 @@ export const AlertTable = memo(function AlertTable({
 
   const virtualRows = virtualizer.getVirtualItems();
 
+  const onRowClickCapture = (event: MouseEvent<HTMLDivElement>) => {
+    // Keyboard activation (detail 0) is never the end of a drag.
+    if (event.detail === 0) return;
+    const target = event.target as HTMLElement;
+    const control = target.closest('.at-select, button, input, a, [role="button"]');
+    // The second click of a double-click selects a word; it must not toggle or reopen the row.
+    const wordClick = event.detail > 1 && !control;
+    if (suppressClick.current || wordClick) {
+      suppressClick.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (!selectable || !onSelectionChange || control) return;
+    const row = target.closest<HTMLElement>('.at-row[data-index]');
+    if (!row) return;
+    const index = Number(row.dataset.index);
+    const item = items[index];
+    if (!item || item.kind === 'lane') return;
+    const additive = event.ctrlKey || event.metaKey;
+    if (!event.shiftKey && !additive) {
+      selectionAnchor.current = itemKey(item);
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.shiftKey) {
+      onCheck(index, false);
+      return;
+    }
+    const anchor = items.findIndex((entry) => itemKey(entry) === selectionAnchor.current);
+    const start = anchor < 0 ? index : anchor;
+    if (anchor < 0) selectionAnchor.current = itemKey(item);
+    const next = new Set(additive ? selectionRef.current : undefined);
+    for (let i = Math.min(start, index); i <= Math.max(start, index); i += 1) {
+      if (items[i].kind !== 'lane') for (const alert of alertsOfItem(items[i])) next.add(alert.id);
+    }
+    onSelectionChange(next);
+  };
+
   return (
     <div
       ref={scrollRef}
@@ -557,17 +598,7 @@ export const AlertTable = memo(function AlertTable({
       onPointerUp={onSelectionPointerUp}
       onPointerCancel={() => endDrag()}
       onLostPointerCapture={() => endDrag()}
-      onClickCapture={(event) => {
-        // Keyboard activation (detail 0) is never the end of a drag.
-        if (event.detail === 0) return;
-        const target = event.target as HTMLElement;
-        // The second click of a double-click selects a word; it must not toggle or reopen the row.
-        const wordClick = event.detail > 1 && !target.closest('.at-select, button, input, a');
-        if (!suppressClick.current && !wordClick) return;
-        suppressClick.current = false;
-        event.preventDefault();
-        event.stopPropagation();
-      }}
+      onClickCapture={onRowClickCapture}
       onFocus={(event) => {
         // A row focused by a click becomes the tab stop, as one focused by the arrow keys.
         const row = event.target as HTMLElement;
