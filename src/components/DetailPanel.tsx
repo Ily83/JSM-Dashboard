@@ -315,7 +315,7 @@ export function DetailPanel({ alert, alertId, onClose }: Readonly<DetailPanelPro
           {detail?.detailError && <p className="mt-2 text-xs text-warn">{detail.detailError}</p>}
         </Section>
 
-        <NotesSection alertId={alertId} canAdd={allowed.has('addNote')} run={runner.run} busy={runner.busy} />
+        <NotesSection alertId={alertId} canAdd={allowed.has('addNote')} canEdit={allowed.has('editNote')} canDelete={allowed.has('deleteNote')} run={runner.run} busy={runner.busy} />
 
         <Section title="Additional properties">
           <dl className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-x-3">
@@ -339,7 +339,7 @@ export function DetailPanel({ alert, alertId, onClose }: Readonly<DetailPanelPro
         </Section>
 
         <ActivitySection alertId={alertId} />
-        <AttachmentsSection alertId={alertId} />
+        <AttachmentsSection alertId={alertId} canUpload={allowed.has('uploadAttachment')} />
       </div>
     </aside>
   );

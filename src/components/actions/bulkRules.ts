@@ -10,7 +10,9 @@ import type { Alert } from '../../../shared/types';
  * with the count as a noun ("3 alerts assigned to Priya Nair").
  */
 
-export type BulkOperation = AlertAction['action'];
+/** Note edits and deletes are scoped to one note in the detail panel. */
+export type BulkRequest = Exclude<AlertAction, { action: 'editNote' | 'deleteNote' }>;
+export type BulkOperation = BulkRequest['action'];
 /** Actions that need a choice first (who, until when, which tags, ...). */
 export type PickerAction = Exclude<BulkOperation, BulkActionId>;
 
@@ -45,7 +47,7 @@ function tagList(tags: readonly string[]): string {
  * the chosen value where the request only holds an id: a person, a team, an
  * escalation, or the formatted snooze end.
  */
-export function questionText(request: AlertAction, n: number, name?: string): string {
+export function questionText(request: BulkRequest, n: number, name?: string): string {
   const alerts = alertCount(n);
   switch (request.action) {
     case 'acknowledge':
@@ -76,7 +78,7 @@ export function questionText(request: AlertAction, n: number, name?: string): st
 }
 
 /** What happened to the `n` alerts Jira accepted. */
-export function resultText(request: AlertAction, n: number, name?: string): string {
+export function resultText(request: BulkRequest, n: number, name?: string): string {
   const alerts = alertCount(n);
   switch (request.action) {
     case 'acknowledge':

@@ -10,7 +10,7 @@ Wishlist items, not scheduled work. Items done in 0.2.0 are ticked; see RELEASE_
   - Done, for acknowledge, unacknowledge and close. Alerts an action does not fit are skipped and counted.
 - [x] Consider additional capabilities: view or add notes, change priority, edit tags, and view or upload attachments. Reading notes and attachments can be considered separately from enabling writes.
   - Done: notes (read and add), activity log, priority, tags, attachment list and download. Reading works without enabling writes.
-- [ ] Upload attachments, edit and delete notes. The API has endpoints for them; not offered yet.
+- [x] Upload attachments and edit or delete notes. Each is a separate opt-in write capability; Jira permissions and plan limits still apply.
 - [x] Investigate reopening a closed alert. This is different from unacknowledging an open alert; there is no dedicated reopen endpoint in the current public [Jira Operations Alerts API reference](https://developer.atlassian.com/cloud/jira/service-desk-ops/rest/v2/api-group-alerts/).
   - Checked the OpenAPI document again: still no reopen endpoint, and acknowledging a closed alert is refused ("You cannot acknowledge a closed alert", seen live). Not possible through the public API.
 
@@ -30,10 +30,10 @@ Reuse the History date, customer, and tag filters. Label rankings as partial whe
 
 - [x] **High-volume background analysis:** Scan beyond 500 alerts per month in paced, low-priority batches; split dense windows around Jira's pagination limit and label incomplete results. Progress and cancellation are available; jobs and results remain in memory until the backend restarts or another analysis starts.
 - [ ] **Validate high-volume analysis on a dedicated Jira test site:** Confirm request cost, rate limits, pagination and completeness against representative production-like volumes. Never use live writes for testing.
-- [ ] **Historical overview:** Show total alerts and breakdowns by current status and priority for the selected creation-date range. Clearly distinguish current status from status at creation or a historical snapshot.
-- [ ] **Daily trends:** Show alerts created per day, with breakdowns by current status or priority and a daily average. Compare created and closed alerts where reliable closure timestamps are available; label the date and status semantics and any missing data.
-- [ ] **Historical rankings:** Rank alerts by source, team, and tag for the selected date range, with counts and drill-down. Explain how alerts with multiple teams or tags are counted.
-- [ ] **History filters:** Extend filters across historical charts and drill-downs to cover source, integration, status, priority, message include/exclude and, where available, alert-detail keys and values. Support tag and source inclusion/exclusion, and make timezone and date boundaries explicit. Label filters or results as incomplete when required data is unavailable.
+- [x] **Historical overview:** Total alerts and breakdowns by current status and priority for the selected creation-date range.
+- [x] **Daily trends:** UTC creation counts, daily average, and a comparison to known closure dates for the same creation cohort.
+- [x] **Historical rankings:** Rank sources, team responders and tags, with drill-down and one count per alert per team or tag.
+- [x] **History filters:** Charts and drill-downs share source and tag inclusion/exclusion, integration, status, priority, message inclusion/exclusion, and available detail key/value filters. Filters are saved with investigations; missing detail fields are flagged.
 
 Time-of-day, weekday, and business-hours patterns are not planned unless requested.
 
@@ -46,8 +46,17 @@ Time-of-day, weekday, and business-hours patterns are not planned unless request
 
 ## Standalone app and authentication
 
-- [ ] **Windows desktop app:** Package the dashboard and local backend as a standalone app with an installer, without requiring users to run npm. Evaluate Electron and Tauri, including secure updates and local resource usage.
-- [ ] **OAuth sign-in:** Investigate Atlassian OAuth support and permissions for the Jira Operations APIs used by the app. Implement per-user sign-in, secure token storage and refresh for the desktop app instead of local API-token credentials.
+- [x] **Local browser OAuth sign-in:** Implemented Atlassian 3LO with backend-only in-memory tokens, refresh and session-specific caches. [Setup and scopes](README.md#sign-in-with-atlassian-oauth).
+- [ ] **Validate OAuth while the dedicated test site has Premium (until December 2026):** Start read-only: check consent, alert and attachment reads, refresh, and sign-out. Then enable only assign and snooze and try them on a disposable test alert as the signed-in user. Confirm the exact trial end date and run these checks before expiry. Separately, verify Windows SSO using an Entra-federated Atlassian account in a managed Windows work profile; Premium alone does not configure SSO. The local integration tests use a fake provider.
+- [ ] **Next: Windows standalone portable app.** Unzip on a clean Windows PC, launch without installing Node or npm, and open the dashboard in the work browser for SSO. Verify startup, shutdown, OAuth callback, and upgrading to a new folder without losing settings. Track signing and managed distribution separately from the first portable build.
+  - Portable x64 ZIP build and launcher implemented; see [build and verification instructions](README.md#windows-portable-app). Clean-Windows acceptance and signing remain open.
+  - Distribution decision: Atlassian's documented code exchange requires a client secret. Keep an organization-owned secret on a confidential backend for a distributed app; never embed it in the installer. If the dashboard moves into an embedded window, sign in in the system browser and design a one-time, instance-bound handoff: the renderer does not share the browser's cookies. Only add persistent login if needed, with user-bound Windows credential protection.
+
+## Operator workflows and AI assistance
+
+- [x] **Operator-configured workflows:** Draft a trigger, conditions and action, preview which loaded alerts match, and copy a setup checklist into Jira Automation for unattended execution. Publishing stays in Jira: the documented rule-management API does not list OAuth 3LO support, and enabling or changing shared rules requires Jira permissions.
+- [ ] **Local agent harness:** Let the operator connect a locally hosted agent or an organization-managed endpoint and choose which tools and alert fields it receives. Support approved MCP servers, including the [Microsoft Learn MCP server](https://learn.microsoft.com/api/mcp) for Azure documentation. Documentation lookups should use service names and symptoms rather than raw customer alert payloads.
+- [ ] **AI-assisted investigation:** From an alert, ask “What should I check first?” Show likely causes, the evidence for each, ordered diagnostic checks, and possible fixes with links to the relevant runbook or Microsoft Learn page. Distinguish observations from hypotheses and flag missing evidence. Suggestions are read-only; the operator decides what to do.
 
 ## Ideas from similar projects
 
@@ -68,7 +77,7 @@ Compared with karma, Alerta, Keep, Siren and jsm-tui on 2026-11-19. Scope: Jira 
 - [x] Personal watch list.
 - [x] Customers from an entity mapping file.
 - [x] Query language in search.
-- [ ] Names for schedule and escalation responders in live mode (the lists are already loaded for the pickers).
-- [ ] Decide whether "assign" may keep using the general Jira people search (`/rest/api/3/user/search`, `/rest/api/3/myself`), or should offer only the alert's responders, to stay strictly within JSM.
+- [x] Resolve live schedule and escalation responder names using the picker directory where available; fall back to IDs.
+- [x] Keep the Jira people directory for Assign and Assign to me: an assignee does not need to be an existing responder. Jira permissions still apply.
 
-Not planned: several Jira sites in one console, application-managed per-person roles, correlating alerts into incidents, automated workflows.
+Not planned: several Jira sites in one console, application-managed per-person roles, correlating alerts into incidents, or an always-on automation engine in the desktop app.

@@ -1,15 +1,17 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, Flame, Info, LoaderCircle, Repeat, Timer, Users, type LucideIcon } from 'lucide-react';
+import { BarChart3, CalendarDays, Flame, Info, LoaderCircle, Repeat, Timer, Users, type LucideIcon } from 'lucide-react';
 import type { Alert } from '../../shared/types';
 import { DAY_MS, HISTORY_PAGE_SIZE, parseUtcDate } from '../../shared/history';
 import type { HistoryAnalysisStatus } from '../../shared/historyAnalysis';
 import { cancelHistoryAnalysis, fetchHistoryAnalysis, fetchHistoryAnalysisResults, startHistoryAnalysis } from '../api/client';
 import type { AlertGroup } from '../lib/alertGroups';
 import { cn } from '../lib/cn';
-import { filterHistoryMonths, formatUtcDay, formatUtcMonth, formatUtcRange, type HistoryMonth } from '../lib/historyAnalysis';
+import { formatUtcDay, formatUtcMonth, formatUtcRange, type HistoryMonth } from '../lib/historyAnalysis';
+import { dailyHistory, filterAnalysis, historyTags, rankHistory } from '../lib/historyMetrics';
+import { HistoryDaily, HistoryFilters, HistoryOverview, overviewBuckets, statusTitle } from './HistoryMetrics';
 import {
-  analysisAlerts,
+  RANK_BY,
   rankCustomers,
   rankHotspots,
   rankRecurring,
@@ -38,6 +40,9 @@ const RECORDS_NOTE = "Records read from Jira, including ranges read again after 
 
 const BREAKDOWN_INFO: Record<Breakdown, { label: string; title: string; icon: LucideIcon }> = {
   month: { label: 'Per month', title: 'Alerts created per month', icon: CalendarDays },
+  overview: { label: 'Overview', title: 'Historical overview', icon: BarChart3 },
+  daily: { label: 'Daily trends', title: 'Daily trends', icon: CalendarDays },
+  rankings: { label: 'Rankings', title: 'Historical rankings', icon: BarChart3 },
   recurring: { label: 'Recurring', title: 'Recurring alerts', icon: Repeat },
   hotspots: { label: 'P1 hotspots', title: 'P1 hotspots', icon: Flame },
   customers: { label: 'Per customer', title: 'Alerts per customer', icon: Users },
@@ -83,6 +88,9 @@ interface BreakdownView {
 }
 
 interface BreakdownInput {
+  from: string;
+  to: string;
+  alerts: Alert[];
   /** The months after the customer and tag filters. */
   months: HistoryMonth[];
   rankings: Rankings;
@@ -99,7 +107,7 @@ function filterOptions(months: readonly HistoryMonth[], customer: string, tag: s
   for (const month of months) {
     for (const alert of month.alerts) {
       for (const name of alert.customers) customers.add(name);
-      for (const name of alert.tags) tags.add(name);
+      for (const name of historyTags(alert)) tags.add(name);
     }
   }
   // A saved investigation may name a value that is not in this range.
@@ -111,21 +119,24 @@ function filterOptions(months: readonly HistoryMonth[], customer: string, tag: s
   };
 }
 
-function filterChipsFor(customer: string, tag: string, p1: boolean): string[] {
-  const chips: string[] = [];
-  if (customer) chips.push(`Customer: ${customer}`);
-  if (tag) chips.push(`Tag: ${tag}`);
+function filterChipsFor(s: AnalysisSettings, p1: boolean): string[] {
+  const chips = [
+    ['Customer', s.customer], ['Tag', s.tag], ['Exclude tag', s.excludeTag], ['Source', s.source], ['Exclude source', s.excludeSource],
+    ['Integration', s.integration], ['Current status', s.status && statusTitle[s.status]], ['Priority', s.priority],
+    ['Message includes', s.message], ['Message excludes', s.excludeMessage], ['Detail key', s.propertyKey], ['Detail value includes', s.propertyValue],
+  ].flatMap(([name, value]) => value?.trim() ? [`${name}: ${value}`] : []);
   if (p1) chips.push('P1 only');
   return chips;
 }
 
 /** The picked bar or row, and the page of its alerts. */
-function useDrilldown({ breakdown, responseBy, dimension, customer, tag, p1Only }: AnalysisSettings) {
+function useDrilldown(settings: AnalysisSettings) {
+  const { breakdown, responseBy, dimension, dayBy, rankBy } = settings;
   // The selected bar or row belongs to one breakdown; the page to one selection.
-  const selectionContext = `${breakdown}|${breakdown === 'response' ? responseBy : dimension}`;
+  const selectionContext = `${breakdown}|${responseBy}|${dimension}|${dayBy}|${rankBy}`;
   const [pick, setPick] = useState<{ context: string; key: string } | null>(null);
   const picked = pick?.context === selectionContext ? pick.key : null;
-  const pageContext = `${selectionContext}|${picked}|${customer}|${tag}|${p1Only}`;
+  const pageContext = JSON.stringify([picked, settings]);
   const [pageState, setPageState] = useState<{ context: string; page: number }>({ context: '', page: 0 });
   const page = pageState.context === pageContext ? pageState.page : 0;
   return {
@@ -261,6 +272,33 @@ function customersView({ rankings, settings, picked, choose }: BreakdownInput): 
 
 const BREAKDOWN_VIEW: Record<Breakdown, (input: BreakdownInput) => BreakdownView> = {
   month: monthView,
+  overview: ({ alerts, picked, choose }) => ({
+    ranking: <HistoryOverview alerts={alerts} picked={picked} choose={choose} />,
+    selection: overviewBuckets(alerts).flatMap(g => g.buckets).find(b => b.key === picked) ?? null,
+    hint: 'Select a status or priority to inspect its alerts.',
+  }),
+  daily: ({ alerts, from, to, settings, picked, choose }) => {
+    const by = settings.dayBy ?? 'priority';
+    const [date, key] = picked?.split('|') ?? [];
+    const day = date && dailyHistory(alerts, date, date).days[0];
+    const values = day ? key === 'created' ? day.created : key === 'closed-at' ? day.closed : day.created.filter(a => a[by] === key) : [];
+    return {
+      ranking: <HistoryDaily alerts={alerts} from={from} to={to} by={by} picked={picked} choose={choose} />,
+      selection: day ? { title: `${formatUtcDay(parseUtcDate(date)!)} (UTC) · ${key === 'closed-at' ? 'Closed that day' : statusTitle[key as keyof typeof statusTitle] ?? key}`, alerts: values } : null,
+      hint: 'Select a day count to inspect its alerts.',
+    };
+  },
+  rankings: ({ alerts, settings, picked, choose }) => {
+    const by = settings.rankBy ?? 'source';
+    const entries = rankHistory(alerts, by);
+    const entry = entries.find(e => e.key === picked);
+    return {
+      ranking: <><p className="mb-2 text-xs text-muted">One count per alert per {by}. Alerts with several teams or tags can appear in more than one bar.</p>
+        <BarList entries={entries} picked={picked} onPick={choose} variant="stacked" label={`Alerts per ${by}`} /></>,
+      selection: entry ? { title: entry.label, alerts: entry.alerts } : null,
+      hint: `Select a ${by} to inspect its alerts.`,
+    };
+  },
   recurring: recurringView,
   hotspots: hotspotsView,
   response: responseView,
@@ -276,8 +314,9 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange, onOpenRa
   const months = results.data ?? EMPTY;
   const options = useMemo(() => filterOptions(months, customer, tag), [months, customer, tag]);
 
-  const filtered = useMemo(() => filterHistoryMonths(months, customer, tag), [months, customer, tag]);
-  const alerts = useMemo(() => analysisAlerts(months, customer, tag), [months, customer, tag]);
+  const filtered = useMemo(() => filterAnalysis(months, settings), [months, settings]);
+  const alerts = useMemo(() => filtered.months.flatMap(m => m.alerts).sort((a, b) => b.createdAt - a.createdAt), [filtered]);
+  const allAlerts = useMemo(() => months.flatMap(m => m.alerts), [months]);
   const rankings = useRankings(alerts, settings);
   // Activity strips in Recurring end with the selected range (or now, if earlier).
   const activityEnd = Math.min(Date.now(), (parseUtcDate(to) ?? Date.now()) + DAY_MS);
@@ -316,8 +355,8 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange, onOpenRa
     );
   }
 
-  const { ranking, selection, hint } = BREAKDOWN_VIEW[breakdown]({ months: filtered, rankings, settings, picked, choose, activityEnd });
-  const filterChips = filterChipsFor(customer, tag, p1Filter);
+  const { ranking, selection, hint } = BREAKDOWN_VIEW[breakdown]({ from, to, alerts, months: filtered.months, rankings, settings, picked, choose, activityEnd });
+  const filterChips = filterChipsFor(settings, p1Filter);
   // Results stay once loaded. A job of another range may have replaced this one on the server since.
   const newer = job && !sameJob ? job : null;
 
@@ -345,6 +384,8 @@ export function HistoryAnalysis({ from, to, settings, onSettingsChange, onOpenRa
           settings={settings}
           onSettingsChange={onSettingsChange}
         />
+        <HistoryFilters alerts={allAlerts} settings={settings} onChange={onSettingsChange} />
+        {filtered.incomplete && <p className="text-xs text-warn">Filter results may be incomplete: some Jira list records did not include alert details.</p>}
         <BreakdownControls settings={settings} usesP1Toggle={usesP1Toggle} onSettingsChange={onSettingsChange} />
         {results.error && <p role="alert" className="text-xs text-crit">Could not refresh the analysis; showing the previous results. {results.error.message}</p>}
         {ranking}
@@ -565,7 +606,7 @@ function AnalysisHeader({ title, from, to, partial, count, p1, note, options, se
         </h2>
         <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
           <span>
-            {formatUtcRange(from, to)} (UTC) · {partial ? 'At least ' : ''}{count.toLocaleString()} {p1 ? 'P1 alerts' : 'matching alerts'}
+            {formatUtcRange(from, to)} (inclusive, UTC) · {partial ? 'At least ' : ''}{count.toLocaleString()} {p1 ? 'P1 alerts' : 'matching alerts'}
           </span>
           <InfoTip text={note} />
         </p>
@@ -637,6 +678,16 @@ function BreakdownControls({ settings, usesP1Toggle, onSettingsChange }: Readonl
           </select>
         </label>
       )}
+      {breakdown === 'daily' && <label className="text-xs">Group created by{' '}
+        <select className={select} value={settings.dayBy ?? 'priority'} onChange={e => onSettingsChange({ dayBy: e.target.value as 'priority' | 'status' })}>
+          <option value="priority">Priority</option><option value="status">Current status</option>
+        </select>
+      </label>}
+      {breakdown === 'rankings' && <label className="text-xs">Rank by{' '}
+        <select className={select} value={settings.rankBy ?? 'source'} onChange={e => onSettingsChange({ rankBy: e.target.value as AnalysisSettings['rankBy'] })}>
+          {RANK_BY.map(by => <option key={by}>{by}</option>)}
+        </select>
+      </label>}
       {usesP1Toggle && (
         <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium">
           <input type="checkbox" className="size-3.5 accent-(--accent)" checked={p1Only} onChange={(event) => onSettingsChange({ p1Only: event.target.checked })} />

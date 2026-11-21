@@ -54,6 +54,7 @@ export class DemoSource implements AlertSource, AlertOperations {
   private readonly raws = new Map<string, RawAlert>();
   private readonly ctx: MapContext;
   private readonly notesById = new Map<string, AlertNote[]>();
+  private readonly attachmentsById = new Map<string, AlertAttachment[]>();
   private readonly logsById = new Map<string, AlertLogEntry[]>();
   private nextNoteId = 1;
 
@@ -93,7 +94,9 @@ export class DemoSource implements AlertSource, AlertOperations {
     const more = offset + HISTORY_PAGE_SIZE < matches.length;
     const atLimit = offset >= HISTORY_MAX_OFFSET;
     return {
-      alerts: matches.slice(offset, offset + HISTORY_PAGE_SIZE).map(toListItem),
+      alerts: matches.slice(offset, offset + HISTORY_PAGE_SIZE).map(detail => ({
+        ...toListItem(detail), historyFields: { tags: detail.rawTags, properties: detail.extraProperties },
+      })),
       hasNext: more && !atLimit,
       truncated: matches.length > HISTORY_MAX_OFFSET + HISTORY_PAGE_SIZE,
       skipped: this.snapshot.skipped,
@@ -117,7 +120,7 @@ export class DemoSource implements AlertSource, AlertOperations {
     let text: string;
 
     // Jira refuses most changes on a closed alert; notes and tags remain possible.
-    if (closed && !['addNote', 'addTags', 'removeTags', 'close'].includes(action.action)) {
+    if (closed && !['addNote', 'editNote', 'deleteNote', 'addTags', 'removeTags', 'close'].includes(action.action)) {
       throw new JiraApiError('validation', 200, 'Jira did not apply the action: Alert is closed');
     }
 
@@ -162,6 +165,16 @@ export class DemoSource implements AlertSource, AlertOperations {
         notes.unshift({ id: `demo-note-${this.nextNoteId++}`, createdAt: Date.parse(now), note: action.note, owner: DEMO_ME.displayName });
         this.notesById.set(id, notes);
         text = 'Note added';
+        break;
+      }
+      case 'editNote':
+      case 'deleteNote': {
+        const notes = this.notesById.get(id) ?? [];
+        const note = notes.find(n => n.id === action.noteId);
+        if (!note) throw new JiraApiError('not_found', 404, 'Note not found.');
+        if (action.action === 'editNote') note.note = action.note;
+        else this.notesById.set(id, notes.filter(n => n.id !== action.noteId));
+        text = action.action === 'editNote' ? 'Note edited' : 'Note deleted';
         break;
       }
       case 'priority':
@@ -210,7 +223,15 @@ export class DemoSource implements AlertSource, AlertOperations {
 
   async attachments(id: string): Promise<Page<AlertAttachment>> {
     this.requireAlert(id);
-    return { values: [], hasMore: false };
+    return { values: this.attachmentsById.get(id) ?? [], hasMore: false };
+  }
+
+  async uploadAttachment(id: string, name: string): Promise<AlertAttachment> {
+    this.requireAlert(id);
+    const attachment = { id: `demo-file-${this.nextNoteId++}`, name, insertedAt: Date.now() };
+    // Demo retains metadata only; uploaded file content is never stored.
+    this.attachmentsById.set(id, [attachment, ...(this.attachmentsById.get(id) ?? [])].slice(0, 100));
+    return attachment;
   }
 
   async attachmentUrl(): Promise<string | null> {

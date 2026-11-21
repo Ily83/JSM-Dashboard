@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Download, Loader2, Plus, X } from 'lucide-react';
-import { NOTE_MAX_LENGTH, TAG_MAX_LENGTH, type AlertAction, type AlertNote } from '../../../shared/actions';
-import { fetchAttachmentUrl } from '../../api/client';
+import { ATTACHMENT_MAX_BYTES, NOTE_MAX_LENGTH, TAG_MAX_LENGTH, type AlertAction, type AlertNote } from '../../../shared/actions';
+import { fetchAttachmentUrl, uploadAttachment } from '../../api/client';
 import { useAttachments, useLogs, useNotes } from '../../api/hooks';
 import { formatAbsolute, formatRelative } from '../../lib/format';
 import { useNow } from '../../lib/now';
@@ -50,30 +51,50 @@ function Collapsible({ title, children }: Readonly<{ title: string; children: (o
 }
 
 /** The notes under the add field: loading, error, nothing yet, or the list. */
-function NoteList({ pending, error, values, canAdd }: Readonly<{ pending: boolean; error: Error | null; values: AlertNote[]; canAdd: boolean }>) {
+type NoteControls = { canEdit: boolean; canDelete: boolean; busy: boolean; run: (action: AlertAction) => Promise<boolean> };
+const smallButton = 'rounded border border-line-strong px-2 py-0.5 text-xs hover:bg-hover disabled:opacity-50';
+
+function NoteRow({ note, busy, canEdit, canDelete, run }: Readonly<NoteControls & { note: AlertNote }>) {
+  const [mode, setMode] = useState<'edit' | 'delete' | null>(null);
+  const [draft, setDraft] = useState('');
+  const submit = (action: AlertAction) => void run(action).then(ok => { if (ok) setMode(null); });
+  return <li className="rounded-md bg-raised px-2.5 py-1.5">
+    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+      <span className="truncate font-medium text-muted">{note.owner ?? 'Unknown'}</span>
+      <span className="ml-auto flex-none"><When ms={note.createdAt} /></span>
+      {canEdit && !mode && <button type="button" className={smallButton} disabled={busy} onClick={() => { setDraft(note.note); setMode('edit'); }}>Edit note</button>}
+      {canDelete && !mode && <button type="button" className={smallButton} disabled={busy} onClick={() => setMode('delete')}>Delete note</button>}
+    </div>
+    {mode !== 'edit' && <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed"><Linkify text={note.note} /></p>}
+    {mode === 'edit' && <form className="mt-1 grid gap-1" onSubmit={e => { e.preventDefault(); submit({ action: 'editNote', noteId: note.id, note: draft.trim() }); }}>
+      <textarea className="rounded border border-line-strong bg-panel px-2 py-1 text-xs" aria-label="Edit note text" value={draft} maxLength={NOTE_MAX_LENGTH} onChange={e => setDraft(e.target.value)} />
+      <div className="flex gap-1">
+        <button className={smallButton} type="submit" disabled={busy || !draft.trim()}>Save note</button>
+        <button className={smallButton} type="button" disabled={busy} onClick={() => setMode(null)}>Cancel</button>
+      </div>
+    </form>}
+    {mode === 'delete' && <div className="mt-1 flex flex-wrap items-center gap-1 text-xs">
+      Delete this note permanently?
+      <button className={`${smallButton} text-crit`} type="button" disabled={busy} onClick={() => submit({ action: 'deleteNote', noteId: note.id })}>Confirm delete note</button>
+      <button className={smallButton} type="button" disabled={busy} onClick={() => setMode(null)}>Cancel</button>
+    </div>}
+  </li>;
+}
+
+function NoteList({ pending, error, values, canAdd, ...controls }: Readonly<NoteControls & { pending: boolean; error: Error | null; values: AlertNote[]; canAdd: boolean }>) {
   if (pending) return <Loading />;
   if (error) return <p className="text-xs text-warn">{error.message}</p>;
   if (values.length === 0) return canAdd ? null : <span className="text-subtle">–</span>;
   return (
     <ul className="grid gap-2">
       {values.map((note) => (
-        <li key={note.id} className="rounded-md bg-raised px-2.5 py-1.5">
-          <div className="flex items-center gap-1.5 text-[11px]">
-            <span className="truncate font-medium text-muted">{note.owner ?? 'Unknown'}</span>
-            <span className="ml-auto flex-none">
-              <When ms={note.createdAt} />
-            </span>
-          </div>
-          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed">
-            <Linkify text={note.note} />
-          </p>
-        </li>
+        <NoteRow key={note.id} note={note} {...controls} />
       ))}
     </ul>
   );
 }
 
-export function NotesSection({ alertId, canAdd, run, busy }: Readonly<{ alertId: string; canAdd: boolean; run: (action: AlertAction) => Promise<boolean>; busy: boolean }>) {
+export function NotesSection({ alertId, canAdd, run, busy, canEdit, canDelete }: Readonly<NoteControls & { alertId: string; canAdd: boolean }>) {
   const notes = useNotes(alertId);
   const [draft, setDraft] = useState('');
   const values = notes.data?.values ?? [];
@@ -112,7 +133,7 @@ export function NotesSection({ alertId, canAdd, run, busy }: Readonly<{ alertId:
           )}
         </form>
       )}
-      <NoteList pending={notes.isPending} error={notes.error} values={values} canAdd={canAdd} />
+      <NoteList pending={notes.isPending} error={notes.error} values={values} canAdd={canAdd} canEdit={canEdit} canDelete={canDelete} busy={busy} run={run} />
     </section>
   );
 }
@@ -191,8 +212,34 @@ function AttachmentList({ alertId }: Readonly<{ alertId: string }>) {
   );
 }
 
-export function AttachmentsSection({ alertId }: Readonly<{ alertId: string }>) {
-  return <Collapsible title="Attachments">{() => <AttachmentList alertId={alertId} />}</Collapsible>;
+function AttachmentUpload({ alertId }: Readonly<{ alertId: string }>) {
+  const queryClient = useQueryClient();
+  const [file, setFile] = useState<File | null>(null);
+  const [inputKey, setInputKey] = useState(0);
+  const invalid = file && (!file.size || file.size > ATTACHMENT_MAX_BYTES || file.name.length > 200);
+  const upload = useMutation({
+    mutationFn: (next: File) => uploadAttachment(alertId, next),
+    onSuccess: () => {
+      setFile(null);
+      setInputKey(key => key + 1);
+      void queryClient.invalidateQueries({ queryKey: ['alert-attachments', alertId] });
+    },
+  });
+  return <form className="mb-2 grid gap-1 text-xs" onSubmit={e => {
+    e.preventDefault();
+    if (file && !invalid && !upload.isPending) upload.mutate(file);
+  }}>
+    <label className="grid gap-1">File to attach (up to 10 MiB)
+      <input type="file" key={inputKey} disabled={upload.isPending} className="w-full" onChange={e => { setFile(e.target.files?.[0] ?? null); upload.reset(); }} />
+    </label>
+    <button className={`${smallButton} justify-self-start`} disabled={!file || Boolean(invalid) || upload.isPending} type="submit">{upload.isPending ? 'Uploading…' : 'Upload attachment'}</button>
+    {invalid && <p role="alert" className="text-crit">Choose a non-empty file up to 10 MiB with a name up to 200 characters.</p>}
+    {upload.error && <p role="alert" className="text-crit">{upload.error.message}</p>}
+  </form>;
+}
+
+export function AttachmentsSection({ alertId, canUpload }: Readonly<{ alertId: string; canUpload: boolean }>) {
+  return <Collapsible title="Attachments">{() => <>{canUpload && <AttachmentUpload alertId={alertId} />}<AttachmentList alertId={alertId} /></>}</Collapsible>;
 }
 
 /** Tags exactly as Jira stores them, with remove buttons and an add field when allowed. */

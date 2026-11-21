@@ -18,13 +18,13 @@ import {
   UsersRound,
   type LucideIcon,
 } from 'lucide-react';
-import { ACTION_LABEL, NOTE_MAX_LENGTH, TAG_MAX_LENGTH, TAGS_MAX_PER_REQUEST, type ActionId, type AlertAction } from '../../../shared/actions';
+import { ACTION_LABEL, NOTE_MAX_LENGTH, TAG_MAX_LENGTH, TAGS_MAX_PER_REQUEST, type ActionId } from '../../../shared/actions';
 import type { Alert } from '../../../shared/types';
 import { useAlertDetail } from '../../api/hooks';
 import { cn } from '../../lib/cn';
 import { button, confirmCloseButton, primaryButton } from '../ui/buttons';
 import { placeMenu, type MenuAnchor } from '../ui/menuPlacement';
-import { appliesTo, CONFIRM_LABEL, needsConfirm, questionText, type BulkOperation, type PickerAction } from './bulkRules';
+import { appliesTo, CONFIRM_LABEL, needsConfirm, questionText, type BulkOperation, type BulkRequest, type PickerAction } from './bulkRules';
 import { AssignPicker, EscalatePicker, PriorityPicker, ResponderPicker, SnoozePicker } from './Pickers';
 
 /**
@@ -99,7 +99,7 @@ interface Item {
 type View =
   | { kind: 'list'; focus?: MenuItemId }
   | { kind: 'picker'; action: PickerAction }
-  | { kind: 'confirm'; request: AlertAction; name?: string; targets: Alert[]; skipped: number };
+  | { kind: 'confirm'; request: BulkRequest; name?: string; targets: Alert[]; skipped: number };
 
 const itemClass =
   'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-fg hover:bg-hover active:bg-line focus-visible:bg-hover focus-visible:-outline-offset-2 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent aria-disabled:active:bg-transparent';
@@ -112,7 +112,7 @@ function focusables(root: Element | null | undefined): HTMLElement[] {
   return root ? Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)) : [];
 }
 
-function TextActionPicker({ action, onPick }: Readonly<{ action: 'addNote' | 'addTags' | 'removeTags'; onPick: (request: AlertAction) => void }>) {
+function TextActionPicker({ action, onPick }: Readonly<{ action: 'addNote' | 'addTags' | 'removeTags'; onPick: (request: BulkRequest) => void }>) {
   const [text, setText] = useState('');
   const tags = [...new Set(text.split(',').map((tag) => tag.trim()).filter(Boolean))];
   const note = text.trim();
@@ -178,7 +178,7 @@ function TextActionPicker({ action, onPick }: Readonly<{ action: 'addNote' | 'ad
   );
 }
 
-function CustomActionPicker({ alert, onPick }: Readonly<{ alert: Alert; onPick: (request: AlertAction) => void }>) {
+function CustomActionPicker({ alert, onPick }: Readonly<{ alert: Alert; onPick: (request: BulkRequest) => void }>) {
   const detail = useAlertDetail(alert.id, alert.updatedAt);
   if (detail.isPending) return <p className="p-2 text-muted">Loading actions…</p>;
   if (detail.error) return <p role="alert" className="p-2 text-crit">{detail.error.message}</p>;
@@ -238,7 +238,7 @@ export function AlertMenu({
   allowed: ReadonlySet<ActionId>;
   /** True while a bulk action runs: no second one can start. */
   busy: boolean;
-  onRun: (request: AlertAction, name: string | undefined, targets: Alert[], skipped: number) => void;
+  onRun: (request: BulkRequest, name: string | undefined, targets: Alert[], skipped: number) => void;
   onOpenAlert: (id: string) => void;
   onClose: () => void;
 }>) {
@@ -361,7 +361,7 @@ export function AlertMenu({
   const anyBackendOff = items.flat().some((item) => backendOff(item.id));
 
   /** Runs the request now when it changes one alert, else asks first. */
-  const request = (action: AlertAction, name?: string) => {
+  const request = (action: BulkRequest, name?: string) => {
     const targets = selected.filter((alert) => appliesTo(action.action, alert));
     if (targets.length === 0 || busy) return;
     const skipped = selected.length - targets.length;
@@ -490,7 +490,7 @@ export function AlertMenu({
     );
   } else {
     const action = view.action;
-    const pick = (value: AlertAction, name?: string) => request(value, name);
+    const pick = (value: BulkRequest, name?: string) => request(value, name);
     content = (
       <div role="dialog" aria-label={ACTION_LABEL[action]} className="grid">
         <div className="flex items-center gap-1 border-b border-line pb-1">

@@ -26,6 +26,8 @@ export interface MapContext {
   teamNames: ReadonlyMap<string, string>;
   /** Id -> name for users, schedules and escalations, when known. */
   otherNames?: ReadonlyMap<string, string>;
+  /** Type-qualified ids for live schedules and escalations. */
+  directoryNames?: ReadonlyMap<string, string>;
   /** Customers for an entity from CUSTOMER_MAP_FILE; adds to the tag and property rules. */
   customersForEntity?: (entity: string | null) => readonly string[];
   /** Builds the "Open in Jira" link, or null when there is no Jira site. */
@@ -135,7 +137,7 @@ function mapResponder(r: NonNullable<RawAlert['responders']>[number], ctx: MapCo
     id: r.id,
     type: (RESPONDER_TYPES.has(type) ? type : 'unknown') as ResponderType,
   };
-  const name = type === 'team' ? ctx.teamNames.get(r.id) : ctx.otherNames?.get(r.id);
+  const name = type === 'team' ? ctx.teamNames.get(r.id) : ctx.directoryNames?.get(`${type}:${r.id}`) ?? ctx.otherNames?.get(r.id);
   if (name) responder.name = name;
   return responder;
 }

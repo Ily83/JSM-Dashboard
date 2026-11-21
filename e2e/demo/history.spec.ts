@@ -25,6 +25,17 @@ test('History: every breakdown, drill-down and a saved investigation', async ({ 
   await page.locator('tbody tr').nth(1).click();
   await expect(page.getByRole('button', { name: 'Next page' })).toBeVisible();
 
+  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  await page.getByRole('button', { name: /^Open:/ }).click();
+  await expect(page.locator('[data-tip="Open"]').filter({ hasText: /^Open$/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Daily trends', exact: true }).click();
+  await expect(page.getByRole('columnheader', { name: 'Closed that day' })).toBeVisible();
+  await page.getByRole('button', { name: 'Rankings', exact: true }).click();
+  await page.getByLabel('Rank by').selectOption('tag');
+  await page.getByText('More filters', { exact: true }).click();
+  await page.getByRole('textbox', { name: 'Message includes' }).fill('no matching alert text 00988');
+  await expect(page.locator('#history-analysis-title + p')).toContainText('0 matching alerts');
+  await page.getByRole('textbox', { name: 'Message includes' }).clear();
   for (const name of ['P1 hotspots', 'Per customer', 'Per month']) {
     const button = page.getByRole('button', { name, exact: true });
     if ((await button.count()) > 0) await button.click();

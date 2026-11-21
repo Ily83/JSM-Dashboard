@@ -1,7 +1,10 @@
 import { randomId } from '../lib/id';
 import { parseUtcDate } from '../../shared/history';
+import { PRIORITIES, STATUSES } from '../../shared/types';
 import {
   DEFAULT_ANALYSIS_SETTINGS,
+  GROUP_BY,
+  RANK_BY,
   isBreakdown,
   isHotspotDimension,
   type AnalysisSettings,
@@ -26,6 +29,21 @@ const MAX_NAME = 80;
 const MAX_FILTER = 200;
 
 const text = (value: unknown, max: number) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+const choice = <T extends string>(values: readonly T[], value: unknown) => values.find(v => v === value);
+const extraText = ['source', 'excludeSource', 'excludeTag', 'integration', 'message', 'excludeMessage', 'propertyKey', 'propertyValue'] as const;
+
+function extraSettings(stored: Record<string, unknown>): Partial<AnalysisSettings> {
+  const settings: Partial<AnalysisSettings> = {};
+  for (const field of extraText) {
+    const value = text(stored[field], MAX_FILTER);
+    if (value) settings[field] = value;
+  }
+  const rankBy = choice(RANK_BY, stored.rankBy);
+  const dayBy = choice(GROUP_BY, stored.dayBy);
+  const status = choice(STATUSES, stored.status);
+  const priority = choice(PRIORITIES, stored.priority);
+  return { ...settings, ...(rankBy && { rankBy }), ...(dayBy && { dayBy }), ...(status && { status }), ...(priority && { priority }) };
+}
 
 export function sanitizeInvestigation(stored: unknown): HistoryInvestigation | null {
   if (!isRecord(stored) || typeof stored.id !== 'string' || !stored.id) return null;
@@ -44,6 +62,7 @@ export function sanitizeInvestigation(stored: unknown): HistoryInvestigation | n
     p1Only: stored.p1Only === true,
     dimension: isHotspotDimension(stored.dimension) ? stored.dimension : defaults.dimension,
     responseBy: isResponseDimension(stored.responseBy) ? stored.responseBy : defaults.responseBy,
+    ...extraSettings(stored),
   };
 }
 
@@ -82,6 +101,7 @@ function pick(input: InvestigationInput): InvestigationInput {
     p1Only: input.p1Only,
     dimension: input.dimension,
     responseBy: input.responseBy,
+    ...extraSettings({ ...input }),
   };
 }
 
@@ -101,7 +121,7 @@ export function updateInvestigation(id: string, input: InvestigationInput): void
   historyStore.set((data) => ({
     saved: data.saved.map((item) => {
       if (item.id !== id) return item;
-      return sanitizeInvestigation({ ...item, ...pick(input) }) ?? item;
+      return sanitizeInvestigation({ id: item.id, name: item.name, ...pick(input) }) ?? item;
     }),
   }));
 }
