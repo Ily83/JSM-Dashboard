@@ -148,6 +148,14 @@ export function fetchAttachments(id: string, signal?: AbortSignal): Promise<Page
   return getJson(`/api/alerts/${enc(id)}/attachments`, signal);
 }
 
+export function uploadAttachment(id: string, file: File): Promise<AlertAttachment> {
+  return getJson(`/api/alerts/${enc(id)}/attachments`, undefined, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', 'X-Alert-Center-Action': '1', 'X-Attachment-Name': enc(file.name) },
+    body: file,
+  });
+}
+
 export function fetchAttachmentUrl(id: string, attachmentId: string): Promise<{ url: string }> {
   return getJson(`/api/alerts/${enc(id)}/attachments/${enc(attachmentId)}`);
 }

@@ -43,6 +43,8 @@ export interface Alert {
   customers: string[];
   /** Tags that were not consumed as a customer or service. */
   tags: string[];
+  /** Optional list-level fields supplied for historical analysis, not a detail fetch. */
+  historyFields?: { tags: string[]; properties: Record<string, string> | null };
   service: string | null;
   entity: string | null;
   /** Alert owner display name. */

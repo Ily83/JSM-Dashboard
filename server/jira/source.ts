@@ -7,6 +7,7 @@ import type { AlertSource, HistoryPage, SourceSnapshot } from '../services/sourc
 import { JiraApiError, JiraClient, MAX_OFFSET_PLUS_SIZE, MAX_PAGE_SIZE, type AlertPage } from './client';
 import { mapAlert, toListItem, type MapContext } from './mapper';
 import type { RawAlert } from './schemas';
+import type { JiraOperations } from './operations';
 
 /**
  * Synchronises alerts from Jira with as few requests as possible.
@@ -66,6 +67,7 @@ export class JiraSource implements AlertSource {
   readonly mode = 'live' as const;
   private lastFullAt = 0;
   private readonly teamNames: Map<string, string> = new Map();
+  private readonly directoryNames = new Map<string, string>();
   private readonly details = new Map<string, CachedDetail>();
   private readonly ctx: MapContext;
 
@@ -74,11 +76,13 @@ export class JiraSource implements AlertSource {
     rules: ExtractionRules,
     private readonly client: JiraClient = new JiraClient(config),
     customerMap: CustomerMap | null = null,
+    private readonly directory?: Pick<JiraOperations, 'teams' | 'schedules' | 'escalations'>,
   ) {
     const template = config.alertUrlTemplate;
     this.ctx = {
       rules,
       teamNames: this.teamNames,
+      directoryNames: this.directoryNames,
       ...(customerMap ? { customersForEntity: (entity: string | null) => customerMap.lookup(entity) } : {}),
       alertUrl: (id) =>
         template.replaceAll('{siteUrl}', config.siteUrl).replaceAll('{id}', encodeURIComponent(id)),
@@ -107,6 +111,7 @@ export class JiraSource implements AlertSource {
   async loadDetail(id: string): Promise<AlertDetail | null> {
     try {
       const raw = await this.client.getAlert(id);
+      if (raw.responders?.some(r => r.type === 'schedule' || r.type === 'escalation')) await this.resolveResponders([raw]);
       this.rememberDetail(raw);
       return mapAlert(raw, this.ctx, true);
     } catch (error) {
@@ -122,11 +127,15 @@ export class JiraSource implements AlertSource {
       size: HISTORY_PAGE_SIZE,
       background,
     });
+    if (this.directory && !this.teamNames.size && page.alerts.some(a => a.responders?.some(r => r.type === 'team'))) await this.refreshTeams();
     const total = page.total ?? 0;
     const more = page.hasNext || total > offset + HISTORY_PAGE_SIZE;
     const atLimit = offset >= HISTORY_MAX_OFFSET;
     return {
-      alerts: page.alerts.map((raw) => toListItem(mapAlert(raw, this.ctx, false))),
+      alerts: page.alerts.map((raw) => {
+        const detail = mapAlert(raw, this.ctx);
+        return { ...toListItem(detail), historyFields: { tags: detail.rawTags, properties: detail.detailLoaded ? detail.extraProperties : null } };
+      }),
       hasNext: more && !atLimit,
       truncated: total > HISTORY_MAX_OFFSET + HISTORY_PAGE_SIZE || (more && atLimit),
       skipped: page.skipped,
@@ -144,6 +153,7 @@ export class JiraSource implements AlertSource {
         ? this.fetchAll(this.query(`createdAt > ${lookbackStart} AND (${this.config.closedQuery})`), this.config.maxClosedAlerts)
         : Promise.resolve<FetchResult>({ raws: [], total: 0, skipped: 0 }),
     ]);
+    await this.resolveResponders([...open.raws, ...closed.raws], true);
 
     const alerts = new Map<string, AlertDetail>();
     for (const raw of closed.raws) alerts.set(raw.id, this.map(raw));
@@ -161,6 +171,7 @@ export class JiraSource implements AlertSource {
 
   private async lightSync(previous: SourceSnapshot, now: number): Promise<SourceSnapshot> {
     const open = await this.fetchAll(this.query(this.config.openQuery), this.config.maxOpenAlerts);
+    await this.resolveResponders(open.raws);
     const truncated = (open.total ?? 0) > this.config.maxOpenAlerts;
 
     const alerts = new Map<string, AlertDetail>();
@@ -316,7 +327,7 @@ export class JiraSource implements AlertSource {
   /** Team names label responders. Failure is not fatal: ids are shown instead. */
   private async refreshTeams(): Promise<void> {
     try {
-      const names = await this.client.listTeams();
+      const names = this.directory ? new Map((await this.directory.teams()).map(t => [t.id, t.name])) : await this.client.listTeams();
       this.teamNames.clear();
       for (const [id, name] of names) this.teamNames.set(id, name);
     } catch (error) {
@@ -324,5 +335,25 @@ export class JiraSource implements AlertSource {
         status: error instanceof JiraApiError ? (error.status ?? 'none') : 'none',
       });
     }
+  }
+
+  /** Reuses picker caches and limits team lookups; unresolved or restricted responders retain their IDs. */
+  private async resolveResponders(alerts: RawAlert[], refresh = false): Promise<void> {
+    if (!this.directory) return;
+    const directory = this.directory;
+    const schedules = alerts.some(a => a.responders?.some(r => r.type === 'schedule' && (refresh || !this.directoryNames.has(`schedule:${r.id}`))));
+    const escalations = alerts.filter(a => a.responders?.some(r => r.type === 'escalation' && (refresh || !this.directoryNames.has(`escalation:${r.id}`))));
+    const teams = new Set(escalations.flatMap(a => (a.responders ?? []).filter(r => r.type === 'team').map(r => r.id)));
+    // Standalone escalation responders don't carry their owning team in the alert.
+    if (escalations.some(a => !a.responders?.some(r => r.type === 'team'))) {
+      for (const id of this.teamNames.keys()) { if (teams.size >= 8) break; teams.add(id); }
+    }
+    const reads = [...teams].slice(0, 8).map(async id => {
+      for (const e of await directory.escalations(id)) this.directoryNames.set(`escalation:${e.id}`, e.name);
+    });
+    if (schedules) reads.push((async () => {
+      for (const s of await directory.schedules()) this.directoryNames.set(`schedule:${s.id}`, s.name);
+    })());
+    await Promise.allSettled(reads);
   }
 }

@@ -38,6 +38,10 @@ export class JiraOperations implements AlertOperations {
     return this.client.listAttachments(id);
   }
 
+  uploadAttachment(id: string, name: string, data: Buffer) {
+    return this.client.uploadAttachment(id, name, data);
+  }
+
   attachmentUrl(id: string, attachmentId: string) {
     return this.client.attachmentUrl(id, attachmentId);
   }

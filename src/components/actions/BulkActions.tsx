@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, CheckCheck, CircleCheck, Ellipsis, ListChecks, Loader2, RotateCcw, TriangleAlert, X } from 'lucide-react';
-import { ACTION_LABEL, BULK_ACTION_IDS, type ActionId, type AlertAction, type BulkActionId } from '../../../shared/actions';
+import { ACTION_LABEL, BULK_ACTION_IDS, type ActionId, type BulkActionId } from '../../../shared/actions';
 import type { Alert } from '../../../shared/types';
 import { applyActionResult, refreshAlerts } from '../../api/hooks';
 import { postAction } from '../../api/client';
@@ -10,7 +10,7 @@ import { button, confirmCloseButton, iconButton, primaryButton, quietButton } fr
 import { anchorFromRect } from '../ui/menuPlacement';
 import { Popover } from '../ui/Popover';
 import { AlertMenu, type AlertContextMenu } from './AlertMenu';
-import { appliesTo, needsConfirm, questionText, resultText, type BulkOperation } from './bulkRules';
+import { appliesTo, needsConfirm, questionText, resultText, type BulkOperation, type BulkRequest } from './bulkRules';
 
 export { appliesTo } from './bulkRules';
 export type { AlertContextMenu } from './AlertMenu';
@@ -40,12 +40,12 @@ interface Failure {
 
 type Phase =
   | { kind: 'idle' }
-  | { kind: 'confirm'; request: AlertAction; targets: Alert[]; skipped: number; from: BulkActionId }
+  | { kind: 'confirm'; request: BulkRequest; targets: Alert[]; skipped: number; from: BulkActionId }
   | { kind: 'running'; action: BulkOperation; total: number; done: number };
 
 interface Outcome {
   id: number;
-  request: AlertAction;
+  request: BulkRequest;
   name?: string;
   ok: number;
   pending: number;
@@ -202,7 +202,7 @@ export function BulkActionBar({
     menuKeys.current.set(contextMenu, menuKey);
   }
 
-  const run = async (request: AlertAction, name: string | undefined, targets: Alert[], skipped: number) => {
+  const run = async (request: BulkRequest, name: string | undefined, targets: Alert[], skipped: number) => {
     const action = request.action;
     const startedWith = currentSelection.current;
     setOutcome(null);

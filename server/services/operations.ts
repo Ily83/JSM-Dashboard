@@ -28,6 +28,7 @@ export interface AlertOperations {
   notes(id: string): Promise<Page<AlertNote>>;
   logs(id: string): Promise<Page<AlertLogEntry>>;
   attachments(id: string): Promise<Page<AlertAttachment>>;
+  uploadAttachment?(id: string, name: string, data: Buffer): Promise<AlertAttachment>;
   /** Temporary download link, or null when there is none (demo mode). */
   attachmentUrl(id: string, attachmentId: string): Promise<string | null>;
   searchUsers(query: string): Promise<DirectoryUser[]>;
@@ -41,6 +42,7 @@ export interface AlertOperations {
 // ---- Validation of incoming action requests -------------------------------
 
 const ID = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9:._-]+$/, 'invalid id');
+const noteId = ID.refine(id => id !== '.' && id !== '..', 'invalid note id');
 
 const tagList = z
   .array(z.string().trim().min(1).max(TAG_MAX_LENGTH))
@@ -60,6 +62,8 @@ const ActionSchema = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('escalate'), escalationId: ID }),
   z.object({ action: z.literal('addNote'), note: z.string().trim().min(1).max(NOTE_MAX_LENGTH) }),
+  z.object({ action: z.literal('editNote'), noteId, note: z.string().trim().min(1).max(NOTE_MAX_LENGTH) }),
+  z.object({ action: z.literal('deleteNote'), noteId }),
   z.object({ action: z.literal('priority'), priority: z.enum(PRIORITIES) }),
   z.object({ action: z.literal('addTags'), tags: tagList }),
   z.object({ action: z.literal('removeTags'), tags: tagList }),

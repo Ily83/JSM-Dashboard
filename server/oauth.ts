@@ -15,8 +15,8 @@ const sites = z.array(z.object({ id: z.string().uuid(), url: z.string(), scopes:
 
 export function oauthScopes(actions: ActionId[]) {
   const scopes = ['offline_access', 'read:ops-alert:jira-service-management', 'read:ops-config:jira-service-management'];
-  if (actions.some(a => a !== 'maintenance' && a !== 'removeTags')) scopes.push('write:ops-alert:jira-service-management');
-  if (actions.includes('removeTags')) scopes.push('delete:ops-alert:jira-service-management');
+  if (actions.some(a => a !== 'maintenance' && a !== 'removeTags' && a !== 'deleteNote')) scopes.push('write:ops-alert:jira-service-management');
+  if (actions.includes('removeTags') || actions.includes('deleteNote')) scopes.push('delete:ops-alert:jira-service-management');
   if (actions.includes('maintenance')) scopes.push('write:ops-config:jira-service-management');
   if (actions.includes('assign') || actions.includes('addResponder')) scopes.push('read:jira-user');
   return scopes;

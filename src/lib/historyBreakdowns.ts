@@ -8,8 +8,10 @@ import type { ResponseDimension } from './responseTimes';
  * on the months already in memory, so switching breakdown sends no request.
  */
 
-export const BREAKDOWNS = ['month', 'recurring', 'hotspots', 'customers', 'response'] as const;
+export const BREAKDOWNS = ['month', 'overview', 'daily', 'rankings', 'recurring', 'hotspots', 'customers', 'response'] as const;
 export type Breakdown = (typeof BREAKDOWNS)[number];
+export const RANK_BY = ['source', 'team', 'tag'] as const;
+export const GROUP_BY = ['status', 'priority'] as const;
 
 export const HOTSPOT_DIMENSIONS = ['customer', 'service', 'group'] as const;
 export type HotspotDimension = (typeof HOTSPOT_DIMENSIONS)[number];
@@ -24,6 +26,18 @@ export interface AnalysisSettings {
   dimension: HotspotDimension;
   /** Response times (MTTA, MTTR): rows per priority, customer or alert group. */
   responseBy: ResponseDimension;
+  rankBy?: (typeof RANK_BY)[number];
+  dayBy?: (typeof GROUP_BY)[number];
+  source?: string;
+  excludeSource?: string;
+  excludeTag?: string;
+  integration?: string;
+  status?: Alert['status'];
+  priority?: Alert['priority'];
+  message?: string;
+  excludeMessage?: string;
+  propertyKey?: string;
+  propertyValue?: string;
 }
 
 export const DEFAULT_ANALYSIS_SETTINGS = (): AnalysisSettings => ({

@@ -13,6 +13,7 @@ import type { WidgetActions } from './components/dashboard/widgets';
 import { DetailPanel } from './components/DetailPanel';
 import { FilterBar } from './components/filters/FilterBar';
 import { HistoryView } from './components/HistoryView';
+import { WorkflowsView } from './components/WorkflowsView';
 import { SettingsView } from './components/SettingsView';
 import { Sidebar } from './components/Sidebar';
 import { AlertTable } from './components/table/AlertTable';
@@ -78,6 +79,7 @@ function staleNoticeText(meta: SyncMeta | undefined, hasAlerts: boolean, request
 function pageTitle(page: Route['page'], views: ViewsData, sectionLabel: string): string {
   if (page === 'settings') return 'Settings';
   if (page === 'history') return 'Alert history';
+  if (page === 'workflows') return 'Workflows';
   return views.saved.find((v) => v.id === views.activeViewId)?.name ?? sectionLabel;
 }
 
@@ -280,6 +282,8 @@ export function App() {
           />
         )}
         {onHistory && <HistoryView />}
+        {route.page === 'workflows' && <WorkflowsView alerts={loadedAlerts} site={status.data?.site} ready={alertsQuery.data !== undefined}
+          limited={Boolean(meta?.truncated || meta?.stale || meta?.skipped)} />}
         {route.page === 'alerts' && (
           <div className="relative flex min-h-0 flex-1">
             <main className="flex min-w-0 flex-1 flex-col">

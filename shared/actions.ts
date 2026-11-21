@@ -32,6 +32,9 @@ export const ACTION_IDS = [
   'addResponder',
   'escalate',
   'addNote',
+  'editNote',
+  'deleteNote',
+  'uploadAttachment',
   'priority',
   'addTags',
   'removeTags',
@@ -53,6 +56,9 @@ export const ACTION_LABEL: Record<ActionId, string> = {
   addResponder: 'Add responder',
   escalate: 'Escalate to next',
   addNote: 'Add note',
+  editNote: 'Edit note',
+  deleteNote: 'Delete note',
+  uploadAttachment: 'Upload attachment',
   priority: 'Change priority',
   addTags: 'Add tags',
   removeTags: 'Remove tags',
@@ -61,6 +67,7 @@ export const ACTION_LABEL: Record<ActionId, string> = {
 };
 
 export const NOTE_MAX_LENGTH = 25_000;
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const TAG_MAX_LENGTH = 100;
 export const TAGS_MAX_PER_REQUEST = 20;
 export const SNOOZE_MAX_DAYS = 30;
@@ -76,6 +83,8 @@ export type AlertAction =
   | { action: 'addResponder'; responder: ResponderTarget }
   | { action: 'escalate'; escalationId: string }
   | { action: 'addNote'; note: string }
+  | { action: 'editNote'; noteId: string; note: string }
+  | { action: 'deleteNote'; noteId: string }
   | { action: 'priority'; priority: Priority }
   | { action: 'addTags'; tags: string[] }
   | { action: 'removeTags'; tags: string[] }

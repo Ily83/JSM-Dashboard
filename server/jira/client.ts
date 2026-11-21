@@ -400,6 +400,13 @@ export class JiraClient {
     };
   }
 
+  async uploadAttachment(id: string, name: string, data: Buffer): Promise<AlertAttachment> {
+    const form = new FormData();
+    form.append('file', new Blob([Uint8Array.from(data)]), name);
+    const attachment = await this.write('POST', `/v1/alerts/${encodeURIComponent(id)}/attachments`, form, AttachmentSchema);
+    return { id: attachment.id, name: attachment.attachmentName ?? attachment.name ?? name, insertedAt: toTime(attachment.insertedAt ?? attachment.createdAt) };
+  }
+
   /** A temporary download link. It carries its own token, so it is never logged. */
   async attachmentUrl(id: string, attachmentId: string): Promise<string> {
     const body = await this.get(
@@ -538,6 +545,12 @@ export class JiraClient {
       case 'addNote':
         // Add alert note answers 200 with the note itself: done synchronously.
         await this.write('POST', `${path}/notes`, { note: action.note }, z.unknown());
+        return { state: 'done', message: null };
+      case 'editNote':
+        await this.write('PATCH', `${path}/notes/${encodeURIComponent(action.noteId)}`, { note: action.note }, z.unknown());
+        return { state: 'done', message: null };
+      case 'deleteNote':
+        await this.write('DELETE', `${path}/notes/${encodeURIComponent(action.noteId)}`, undefined, z.unknown());
         return { state: 'done', message: null };
     }
   }
@@ -695,15 +708,16 @@ export class JiraClient {
     let response: Response;
     this.requestCount += 1;
     const authorization = this.bearer ? `Bearer ${await this.bearer.token()}` : this.authorization;
+    const multipart = body instanceof FormData;
     try {
       response = await this.fetchImpl(url, {
         method,
         headers: {
           Accept: 'application/json',
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(body === undefined || multipart ? {} : { 'Content-Type': 'application/json' }),
           ...(authenticated ? { Authorization: authorization } : {}),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(body === undefined ? {} : { body: multipart ? body : JSON.stringify(body) }),
         // Never follow a redirect with credentials attached.
         redirect: authenticated ? 'error' : 'follow',
         signal: AbortSignal.timeout(this.config.requestTimeoutMs),

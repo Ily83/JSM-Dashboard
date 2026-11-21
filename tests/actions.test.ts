@@ -181,6 +181,29 @@ describe('JiraClient write actions (against a fake API)', () => {
     ]);
   });
 
+  it('sends note edits and deletes to the individual note endpoint', async () => {
+    const { client, calls } = fakeWriteApi(() => json({}));
+    await client.performAction('a1', { action: 'editNote', noteId: 'note-1', note: 'Updated' });
+    await client.performAction('a1', { action: 'deleteNote', noteId: 'note-1' });
+    expect(calls.map(({ method, path, body }) => [method, path, body ?? null])).toEqual([
+      ['PATCH', '/v1/alerts/a1/notes/note-1', { note: 'Updated' }],
+      ['DELETE', '/v1/alerts/a1/notes/note-1', null],
+    ]);
+  });
+
+  it('uploads a multipart file with its original name and content', async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const request = new Request('https://api.atlassian.com/', init);
+      const file = (await request.formData()).get('file') as File;
+      expect(file.name).toBe('résumé.txt');
+      expect(await file.text()).toBe('contents');
+      return json({ id: 'file-1', attachmentName: file.name });
+    });
+    const client = new JiraClient(jiraConfig, 4, fetcher);
+    await expect(client.uploadAttachment('a1', 'résumé.txt', Buffer.from('contents'))).resolves.toMatchObject({ id: 'file-1', name: 'résumé.txt' });
+    expect(String(fetcher.mock.calls[0][0])).toMatch(/\/v1\/alerts\/a1\/attachments$/);
+  });
+
   it('gives write failures their own messages', async () => {
     const forbidden = fakeWriteApi(() => json({}, 403));
     await expect(forbidden.client.performAction('a1', { action: 'close' })).rejects.toThrow(/refused this action/);
@@ -267,6 +290,21 @@ describe('background history analysis API', () => {
 });
 
 describe('POST /api/alerts/:id/actions', () => {
+  it('gates uploads, rejects invalid files and lists accepted metadata only', async () => {
+    const { base, server, alerts } = await serve(demoConfig(['uploadAttachment']));
+    servers.push(server);
+    const url = `${base}/api/alerts/${alerts[0].id}/attachments`;
+    const headers = { ...actionHeaders, 'content-type': 'application/octet-stream', 'x-attachment-name': 'diagnostics.txt' };
+    const post = (body: BodyInit, h: Record<string, string> = headers) => fetch(url, { method: 'POST', headers: h, body });
+    expect((await post('hello', { ...headers, origin: 'https://other.example' })).status).toBe(403);
+    expect((await post('hello', { ...headers, 'x-attachment-name': '..%2Fprivate' })).status).toBe(400);
+    expect((await post(new Uint8Array(10 * 1024 * 1024 + 1))).status).toBe(413);
+    expect((await post('hello')).status).toBe(201);
+    expect(await (await fetch(url)).json()).toMatchObject({ values: [{ name: 'diagnostics.txt' }] });
+    const off = await serve(demoConfig([]));
+    servers.push(off.server);
+    expect((await fetch(`${off.base}/api/alerts/${off.alerts[0].id}/attachments`, { method: 'POST', headers, body: 'test' })).status).toBe(403);
+  });
   it('runs an action on demo data and returns the updated alert', async () => {
     const { base, server, alerts } = await serve(demoConfig());
     servers.push(server);

@@ -19,6 +19,20 @@ test.describe('actions', () => {
     await p.getByRole('textbox', { name: 'New note' }).fill('Checked by the end-to-end test.');
     await p.getByRole('button', { name: 'Add note' }).click();
     await expect(p.locator('li', { hasText: 'Checked by the end-to-end test.' })).toBeVisible();
+    const note = p.locator('li', { hasText: 'Checked by the end-to-end test.' });
+    await note.getByRole('button', { name: 'Edit note', exact: true }).click();
+    await p.getByRole('textbox', { name: 'Edit note text' }).fill('Edited by the end-to-end test.');
+    await p.getByRole('button', { name: 'Save note' }).click();
+    const edited = p.locator('li', { hasText: 'Edited by the end-to-end test.' });
+    await expect(edited).toBeVisible();
+    await edited.getByRole('button', { name: 'Delete note', exact: true }).click();
+    await p.getByRole('button', { name: 'Confirm delete note' }).click();
+    await expect(edited).toHaveCount(0);
+
+    await p.getByRole('button', { name: 'Attachments', exact: true }).click();
+    await p.getByLabel('File to attach').setInputFiles({ name: 'demo-report.txt', mimeType: 'text/plain', buffer: Buffer.from('demo') });
+    await p.getByRole('button', { name: 'Upload attachment' }).click();
+    await expect(p.getByRole('button', { name: 'demo-report.txt' })).toBeVisible();
 
     await p.getByRole('button', { name: 'Add tags' }).click();
     await p.getByRole('textbox', { name: /New tags/ }).fill('customer:Litware, e2e');

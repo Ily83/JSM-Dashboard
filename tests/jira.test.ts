@@ -18,6 +18,7 @@ interface FakeAlert {
   extraProperties?: Record<string, string>;
   description?: string;
   acknowledged?: boolean;
+  responders?: Array<{ id: string; type: string }>;
 }
 
 function fakeJira(options: { alerts: FakeAlert[]; listOmitsExtraProperties?: boolean; listCount?: number }) {
@@ -108,6 +109,21 @@ function makeAlerts(count: number, status = 'open'): FakeAlert[] {
 }
 
 describe('Jira integration (against a fake API)', () => {
+  it('labels schedule and escalation responders using the same directory as the pickers', async () => {
+    const raw = { ...makeAlerts(1)[0], responders: [
+      { id: 't1', type: 'team' }, { id: 'shared', type: 'schedule' }, { id: 'shared', type: 'escalation' }, { id: 'unavailable', type: 'schedule' },
+    ] };
+    const jira = fakeJira({ alerts: [raw] });
+    const directory = {
+      teams: async () => [{ id: 't1', name: 'Team' }],
+      schedules: async () => [{ id: 'shared', name: 'Schedule' }],
+      escalations: vi.fn(async () => [{ id: 'shared', name: 'Escalation' }]),
+    };
+    const source = new JiraSource(config, rules, new JiraClient(config, 4, jira.fetchImpl), null, directory);
+    const snapshot = await source.sync(null);
+    expect(snapshot.alerts.get(raw.id)?.responders.map(r => r.name)).toEqual(['Team', 'Schedule', 'Escalation', undefined]);
+    expect(directory.escalations).toHaveBeenCalledWith('t1');
+  });
   it('pages through all open and recently closed alerts with GET and Basic auth only', async () => {
     const jira = fakeJira({ alerts: [...makeAlerts(250), ...makeAlerts(30, 'closed')] });
     const source = new JiraSource(config, rules, new JiraClient(config, 4, jira.fetchImpl));

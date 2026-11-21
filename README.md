@@ -42,8 +42,8 @@ If you enable writes, also enable the corresponding console permissions and sign
 
 | Enabled action | Additional scope |
 |---|---|
-| Any alert write other than removing tags | `write:ops-alert:jira-service-management` |
-| Remove tags | `delete:ops-alert:jira-service-management` |
+| Alert writes other than removing tags or deleting notes | `write:ops-alert:jira-service-management` |
+| Remove tags or delete notes | `delete:ops-alert:jira-service-management` |
 | Maintenance writes | `write:ops-config:jira-service-management` |
 | Assign or add responder (people picker) | Jira API `read:jira-user` |
 
@@ -77,9 +77,15 @@ Preferences and saved views are stored in the browser. The P1 alarm watches all 
 
 Open **Alert history** to load alerts by creation date, up to 12 months back in UTC. Results include closed alerts still retained by Jira and respect `JIRA_ALERT_QUERY`.
 
-**Analyze** offers monthly counts, recurring alerts, P1 hotspots, response times and alerts per customer. Customer and tag filters apply to all breakdowns; select a result to drill down. Save a selection under **Investigations**.
+**Analyze** offers an overview by current status and priority, daily and monthly trends, rankings by source/team/tag, recurring alerts, P1 hotspots, response times and alerts per customer. Daily closure counts use known close times only for alerts created in the selected UTC date range. Filters apply to every chart and drill-down and can be saved under **Investigations**. Detail key/value filters use only the properties Jira includes in list results; the app marks incomplete results rather than fetching every alert.
 
 Analysis runs in the backend in batches and continues while you use the dashboard. Progress is shown in History. Requests are paced and give interactive work priority, although Jira rate limits are shared. Results are held in memory until another analysis starts or the server restarts. A `+` or **Partial** indicates incomplete results. An alert with multiple customers counts once for each.
+
+## Workflows
+
+Open **Workflows** to draft an alert-created, alert-updated or status-changed rule. Choose team scope and conditions, then pick a log, Slack or email action. Preview uses the current fields of loaded alerts; it neither replays trigger events nor sends anything. Saved drafts stay in this browser and are separate from preferences backups.
+
+Copy the checklist and configure the flow in Jira Automation. Start with a log action on a dedicated test site. An authorized operator must enable the flow in Jira, which then runs it even when the dashboard is closed. Any destinations or connections are configured in Jira, not in the dashboard.
 
 ## Write actions
 
@@ -87,7 +93,7 @@ Writes are disabled by default. To enable them, set `JIRA_WRITE_ACTIONS` in `.en
 
 Actions include acknowledging, closing, assigning, snoozing, notes, tags and maintenance windows. Bulk actions report per-alert outcomes. Jira permissions and plan restrictions apply; actions use the signed-in OAuth user or the configured API-token account.
 
-Demo actions only modify in-memory sample data. Reopening closed alerts, editing or deleting notes, and uploading attachments are not available in the app.
+Open an alert to edit or delete notes and upload attachments up to 10 MiB. Enable `editNote`, `deleteNote`, or `uploadAttachment` as needed. Demo writes only affect memory, and demo uploads retain metadata but not file contents. Reopening closed alerts is not available.
 
 ## Checks and test tools
 
@@ -107,7 +113,7 @@ Demo actions only modify in-memory sample data. Reopening closed alerts, editing
 
 - The browser refreshes every 60 seconds by default. The backend caches Jira data and retains the last successful result if Jira is unavailable.
 - Maintenance, heartbeats and on-call widgets are optional. Maintenance coverage matches integration names, not policy or sync rules.
-- Team responders can be named; users, schedules and escalations may appear as IDs. Jira Free refuses some actions, including assign and snooze.
+- The app resolves team, schedule and escalation responder names when available; otherwise it shows their IDs. Assign searches the Jira people directory, not just the alert's responders. Jira Free refuses some actions, including assign and snooze.
 - `GET /healthz` checks the process; `GET /readyz` checks whether the first sync succeeded.
 - The server listens on localhost by default. Enabled writes are checked by the backend, and cross-site write requests are rejected.
 

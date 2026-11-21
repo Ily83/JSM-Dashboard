@@ -43,8 +43,8 @@ function dashboard(config: AppConfig, bearer?: Bearer) {
   let opsContext: OpsContextSource;
   if (config.jira) {
     const client = new JiraClient(config.jira, 4, fetch, bearer);
-    source = new JiraSource(config.jira, config.extraction, client, customerMap);
     const jiraOperations = new JiraOperations(client);
+    source = new JiraSource(config.jira, config.extraction, client, customerMap, jiraOperations);
     operations = jiraOperations;
     opsContext = new JiraOpsContext(client, () => jiraOperations.teams(), (teamId) => jiraOperations.escalations(teamId));
   } else {
