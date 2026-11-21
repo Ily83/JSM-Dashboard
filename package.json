@@ -8,7 +8,7 @@
     "dev:web": "vite",
     "build": "vite build",
     "package:windows": "node scripts/package-windows.mjs",
-    "test:portable": "node scripts/test-portable.mjs",
+    "test:portable": "node scripts/package-windows.mjs --linux-smoke",
     "start": "tsx server/index.ts --production",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

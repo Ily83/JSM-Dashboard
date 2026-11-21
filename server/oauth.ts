@@ -27,6 +27,13 @@ export interface Bearer {
   invalidate(): void;
 }
 
+/** Supplied only by the Electron main process. The browser never receives window credentials. */
+export interface DesktopAuth {
+  isWindow(req: Request): boolean;
+  openBrowser(url: string): Promise<void>;
+  onSignedIn(): void;
+}
+
 function cookie(req: Request, name: string) {
   return req.get('cookie')?.split(/;\s*/).find(c => c.startsWith(`${name}=`))?.slice(name.length + 1);
 }
@@ -35,6 +42,7 @@ function cookie(req: Request, name: string) {
 export function createOAuthApp(
   oauth: OAuthConfig, jira: JiraConfig, dashboard: (cloudId: string, bearer: Bearer) => RequestHandler,
   fetchImpl: typeof fetch = fetch,
+  desktop?: DesktopAuth,
 ) {
   const app = express();
   const callback = new URL(oauth.redirectUri);
@@ -42,6 +50,8 @@ export function createOAuthApp(
   const prefix = `jsm_${callback.port}_`;
   const options = { httpOnly: true, sameSite: 'lax' as const, path: '/' };
   let pending: { state: string; browser: string; until: number } | undefined;
+  let launch: { key: string; until: number } | undefined;
+  let desktopAttempt = 0;
   let session: { id: string; handler: RequestHandler; bearer: Bearer } | undefined;
 
   const exchange = async (grant: Record<string, string>) => {
@@ -62,15 +72,17 @@ export function createOAuthApp(
       res.status(403).type('text').send(`Open the configured dashboard address: ${callback.origin}`);
     } else if (req.method !== 'GET' && req.method !== 'HEAD' && req.get('origin') !== callback.origin) {
       res.sendStatus(403);
+    } else if (desktop && !desktop.isWindow(req) &&
+        !(req.method === 'GET' && (req.path === `${AUTH}/callback` || /^\/api\/auth\/desktop\/[A-Za-z0-9_-]{43}$/.test(req.path)))) {
+      res.sendStatus(403);
     } else next();
   });
 
-  const loginPage = (res: Response, message: string) => res.type('html').send(
-    `<!doctype html><html lang="en"><meta charset="utf-8"><title>Alert Center sign-in</title><main><h1>Jira Operations – Alert Center</h1><p>${message}</p><a href="${AUTH}/start">Sign in with Atlassian</a></main></html>`,
+  const loginPage = (res: Response, message: string, retry = true) => res.type('html').send(
+    `<!doctype html><html lang="en"><meta charset="utf-8"><title>Alert Center sign-in</title><main><h1>Jira Operations – Alert Center</h1><p>${message}</p>${retry ? `<a href="${AUTH}/start">Sign in with Atlassian</a>` : ''}</main></html>`,
   );
   app.get(`${AUTH}/login`, (_req, res) => loginPage(res, 'Use the Atlassian account for your Jira site.'));
-  app.get(`${AUTH}/start`, (req, res) => {
-    if (req.get('sec-fetch-site') === 'cross-site') { res.sendStatus(403); return; }
+  const start = (res: Response) => {
     pending = { state: random(), browser: random(), until: Date.now() + 600_000 };
     res.cookie(prefix + 'login', pending.browser, { ...options, maxAge: 600_000 });
     const query = new URLSearchParams({
@@ -78,16 +90,40 @@ export function createOAuthApp(
       redirect_uri: oauth.redirectUri, state: pending.state, response_type: 'code', prompt: 'consent',
     });
     res.redirect(`https://auth.atlassian.com/authorize?${query}`);
+  };
+  app.get(`${AUTH}/start`, async (req, res) => {
+    if (req.get('sec-fetch-site') === 'cross-site') { res.sendStatus(403); return; }
+    if (!desktop) { start(res); return; }
+    pending = undefined;
+    desktopAttempt++;
+    const key = random();
+    launch = { key, until: Date.now() + 60_000 };
+    try {
+      await desktop.openBrowser(`${callback.origin}${AUTH}/desktop/${key}`);
+      loginPage(res, 'Finish signing in in your work browser. This window will open the dashboard when sign-in completes.');
+    } catch {
+      if (launch?.key === key) launch = undefined;
+      loginPage(res.status(502), 'Could not open the work browser. Try again.');
+    }
+  });
+  app.get(`${AUTH}/desktop/:key`, (req, res) => {
+    if (!desktop || !launch || launch.until <= Date.now() || req.params.key !== launch.key) {
+      res.sendStatus(403); return;
+    }
+    launch = undefined;
+    start(res);
   });
   app.get(`${AUTH}/callback`, async (req, res) => {
+    const callbackPage = (message: string, status: number) => loginPage(res.status(status), message, !desktop);
     if (!pending || pending.until <= Date.now() || req.query.state !== pending.state || cookie(req, prefix + 'login') !== pending.browser) {
-      loginPage(res.status(400), 'This sign-in link expired or belongs to another browser. Start again.');
+      callbackPage('This sign-in link expired or belongs to another browser. Start again in Alert Center.', 400);
       return;
     }
+    const attempt = desktopAttempt;
     pending = undefined;
     res.clearCookie(prefix + 'login', options);
     if (typeof req.query.code !== 'string' || req.query.error) {
-      loginPage(res.status(403), 'Sign-in was cancelled or refused.');
+      callbackPage('Sign-in was cancelled or refused.', 403);
       return;
     }
     try {
@@ -99,8 +135,12 @@ export function createOAuthApp(
       if (!response.ok) throw new Error('Site discovery failed.');
       const site = sites.parse(await response.json()).find(s => s.url.replace(/\/$/, '') === jira.siteUrl &&
         (!jira.cloudId || s.id === jira.cloudId) && scopes.every(scope => scope === 'offline_access' || s.scopes.includes(scope)));
+      if (desktop && attempt !== desktopAttempt) {
+        callbackPage('A newer sign-in attempt was started in Alert Center.', 409);
+        return;
+      }
       if (!site) {
-        loginPage(res.status(403), 'The configured Jira site or required permissions were not granted. Select the configured site when consenting.');
+        callbackPage('The configured Jira site or required permissions were not granted. Select the configured site when consenting.', 403);
         return;
       }
       const id = random();
@@ -129,20 +169,26 @@ export function createOAuthApp(
       const handler = dashboard(site.id, bearer);
       session?.bearer.invalidate();
       session = { id, bearer, handler };
-      res.cookie(prefix + 'session', id, { ...options, maxAge: TTL });
-      res.redirect(303, '/');
+      if (desktop) {
+        callbackPage('Sign-in complete. Return to the Alert Center window. You can close this tab.', 200);
+        desktop.onSignedIn();
+      } else {
+        res.cookie(prefix + 'session', id, { ...options, maxAge: TTL });
+        res.redirect(303, '/');
+      }
     } catch {
-      loginPage(res.status(502), 'Could not complete Atlassian sign-in. Check the app credentials, callback URL and connectivity.');
+      callbackPage('Could not complete Atlassian sign-in. Check the app credentials, callback URL and connectivity.', 502);
     }
   });
   app.post(`${AUTH}/logout`, (req, res) => {
-    if (session && cookie(req, prefix + 'session') === session.id) session.bearer.invalidate();
+    if (session && (desktop || cookie(req, prefix + 'session') === session.id)) session.bearer.invalidate();
+    if (desktop) { pending = undefined; launch = undefined; desktopAttempt++; }
     res.clearCookie(prefix + 'session', options).redirect(303, `${AUTH}/login`);
   });
   app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
   app.use(async (req, res, next) => {
     const current = session;
-    if (current && cookie(req, prefix + 'session') === current.id) {
+    if (current && (desktop || cookie(req, prefix + 'session') === current.id)) {
       try {
         await current.bearer.token();
         if (current === session) { current.handler(req, res, next); return; }

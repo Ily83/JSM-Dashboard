@@ -83,7 +83,7 @@ export function createApp(
       ...(config.oauth ? { referrerPolicy: { policy: 'same-origin' as const }, strictTransportSecurity: false } : {}),
       // The Vite dev server injects inline scripts; the strict policy applies to the production build.
       contentSecurityPolicy: config.isProduction
-        ? { directives: { defaultSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:'], ...(config.oauth ? { upgradeInsecureRequests: null } : {}) } }
+        ? { directives: { defaultSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:'], ...(config.oauth || config.distDir ? { upgradeInsecureRequests: null } : {}) } }
         : false,
     }),
   );
@@ -419,7 +419,7 @@ export function createApp(
   app.use('/api', api);
 
   // Production: serve the built frontend from the same origin.
-  const dist = path.resolve('dist');
+  const dist = config.distDir ?? path.resolve('dist');
   if (config.isProduction && existsSync(path.join(dist, 'index.html'))) {
     app.use(
       express.static(dist, {
