@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../server/config';
 import { JiraClient } from '../server/jira/client';
-import { createOAuthApp, oauthScopes } from '../server/oauth';
+import { createOAuthApp, oauthScopes, type DesktopAuth } from '../server/oauth';
 
 const env = {
   JIRA_AUTH_MODE: 'oauth', JIRA_SITE_URL: 'https://test.atlassian.net',
@@ -14,7 +14,7 @@ const siteId = '76831eb2-10ab-41df-a843-39a01f1e09e4';
 const close: Array<() => Promise<void>> = [];
 afterEach(async () => { await Promise.all(close.splice(0).map(fn => fn())); });
 
-async function fixture(siteUrl = env.JIRA_SITE_URL) {
+async function fixture(siteUrl = env.JIRA_SITE_URL, desktop?: DesktopAuth) {
   const server = createServer().listen(0, '127.0.0.1');
   await once(server, 'listening');
   close.push(() => new Promise<void>((resolve) => { server.close(() => resolve()); server.closeAllConnections(); }));
@@ -29,11 +29,11 @@ async function fixture(siteUrl = env.JIRA_SITE_URL) {
     }
     return Response.json([{ url: siteUrl, id: siteId, scopes: oauthScopes([]).filter(s => s !== 'offline_access') }]);
   });
-  const app = createOAuthApp(config.oauth!, config.jira!, (cloudId) => (_req, res) => { res.json({ cloudId }); }, upstream);
+  const app = createOAuthApp(config.oauth!, config.jira!, (cloudId) => (_req, res) => { res.json({ cloudId }); }, upstream, desktop);
   server.on('request', app);
   const origin = new URL(config.oauth!.redirectUri).origin;
-  const get = (path: string, cookie = '', method = 'GET', requestOrigin = origin) =>
-    fetch(local + path, { method, redirect: 'manual', headers: { cookie, origin: requestOrigin } });
+  const get = (path: string, cookie = '', method = 'GET', requestOrigin = origin, window = false) =>
+    fetch(local + path, { method, redirect: 'manual', headers: { cookie, origin: requestOrigin, ...(window ? { 'x-test-window': 'trusted' } : {}) } });
   async function start() {
     const res = await get('/api/auth/start');
     const url = new URL(res.headers.get('location')!);
@@ -45,6 +45,33 @@ async function fixture(siteUrl = env.JIRA_SITE_URL) {
 }
 
 describe('local OAuth sign-in', () => {
+  it('hands off desktop OAuth once and keeps the authenticated dashboard out of the work browser', async () => {
+    const openBrowser = vi.fn(async (_url: string) => {});
+    const onSignedIn = vi.fn();
+    const { get, grants } = await fixture(env.JIRA_SITE_URL, {
+      isWindow: req => req.get('x-test-window') === 'trusted', openBrowser, onSignedIn,
+    });
+    expect((await get('/api/auth/start')).status).toBe(403);
+    expect((await get('/api/auth/start', '', 'GET', undefined, true)).status).toBe(200);
+    const link = new URL(openBrowser.mock.calls[0][0]);
+    const redirect = await get(link.pathname);
+    expect(redirect.status).toBe(302);
+    expect((await get(link.pathname)).status).toBe(403);
+    const state = new URL(redirect.headers.get('location')!).searchParams.get('state');
+    const callback = `/api/auth/callback?code=test&state=${state}`;
+    expect((await get(callback)).status).toBe(400);
+    const loginCookie = redirect.headers.getSetCookie()[0].split(';')[0];
+    const complete = await get(callback, loginCookie);
+    expect(complete.status).toBe(200);
+    expect(await complete.text()).toContain('Return to the Alert Center window');
+    expect(complete.headers.getSetCookie().every(c => !c.includes('_session='))).toBe(true);
+    expect(onSignedIn).toHaveBeenCalledOnce();
+    expect((await get('/api/alerts', loginCookie)).status).toBe(403);
+    expect(await (await get('/api/alerts', '', 'GET', undefined, true)).json()).toEqual({ cloudId: siteId });
+    expect(grants).toHaveLength(2);
+    expect((await get('/api/auth/logout', '', 'POST', undefined, true)).status).toBe(303);
+    expect((await get('/api/status', '', 'GET', undefined, true)).status).toBe(401);
+  });
   it('never falls back to basic or demo on incomplete OAuth configuration', () => {
     expect(() => loadConfig({ ...env, JIRA_OAUTH_CLIENT_SECRET: '' })).toThrow(/OAuth requires/);
     expect(() => loadConfig({ ...env, HOST: '0.0.0.0' })).toThrow(/loopback/);
