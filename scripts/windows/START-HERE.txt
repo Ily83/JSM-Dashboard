@@ -1,17 +1,19 @@
 Jira Operations - Alert Center (portable, Windows x64)
 
 1. Extract the entire ZIP into a folder under your Windows user account.
-2. Double-click Alert Center.exe. The first run opens sample data when no
-   Jira connection is configured. The console shows the dashboard address;
-   you can open it in your work browser if that is not your default.
-3. Keep the console open while using the dashboard. Close it to stop the app.
+2. Double-click Alert Center.exe. The dashboard opens in its own window,
+   with sample data when no Jira connection is configured.
+3. Close the Alert Center window to stop the app.
+
+An unsigned ZIP is for development testing and is not suitable for managed
+Windows devices. Ask endpoint IT for an approved signed build.
 
 To connect your own Jira site, copy .env.example to .env beside the launcher,
 configure the connection and restart. See README.md for OAuth registration,
-scope details and Windows SSO. For the portable app, starting the EXE replaces
-the npm build/start steps. Do not share your configured .env or customer map.
+scope details and Windows SSO. OAuth opens the system browser for sign-in
+only, then returns to the app window. Do not share your .env or customer map.
 Leave JIRA_WRITE_ACTIONS empty for read-only use.
 
 To upgrade, stop the running app, extract the new ZIP to a fresh folder, then
-copy your .env and any customer mapping file across. Saved views stay in the
-same browser profile if the dashboard address (including port) stays the same.
+copy your .env and any customer mapping file across. Saved views use the
+app's local Windows profile and stay available if the port stays the same.

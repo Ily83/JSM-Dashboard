@@ -6,11 +6,13 @@ A local dashboard for Jira Service Management Cloud Operations alerts. It is **r
 
 ## Windows portable app
 
-On Windows x64, download the portable ZIP from [GitHub Releases](https://github.com/Ily83/JSM-Dashboard/releases), extract it, and double-click **Alert Center.exe**. No installer, administrator privileges, Node or npm are needed. The launcher starts the local backend and opens the dashboard in the default browser. Close the console window to stop it.
+The desktop ZIP opens **Alert Center.exe** in its own window. Extract the entire ZIP before running it. No installer, administrator privileges, Node or npm are needed. Closing the window stops the local backend. The older v0.4.0 release is a browser launcher, not the desktop build.
 
-The ZIP ships with sample data and a blank `.env.example`. For live use, copy it to `.env` beside the EXE, configure your Jira connection, then restart. For [OAuth](#sign-in-with-atlassian-oauth), use a private app registration during testing; never distribute a shared client secret with the ZIP. Upgrades go in a fresh folder: copy your private `.env` and any mapping file across. Browser preferences stay with the same profile and dashboard URL.
+The ZIP ships with sample data and a blank `.env.example`. For live use, copy it to `.env` beside the EXE, configure your Jira connection, then restart. OAuth opens the system browser for sign-in and returns to the app window. Use a private app registration for testing; never distribute a shared client secret with the ZIP. When upgrading, copy your private `.env` and any mapping file to the new folder. Desktop preferences live in the app's Windows user profile, separate from the browser.
 
-**Build the ZIP:** With Go on `PATH` and the project's npm dependencies installed, run `npm run package:windows` on Windows, Linux or macOS. It downloads the pinned, checksum-verified Windows Node runtime and writes the ZIP and its SHA-256 checksum to `release/`. Run `npm run test:portable` to check the extracted package in demo and signed-out OAuth modes. On Windows the check runs the launcher itself. The prototype launcher is unsigned.
+**Build the ZIP:** Run `npm run package:windows` with npm dependencies installed. It verifies the pinned Electron runtime and writes the ZIP and SHA-256 checksum to `release/`. `npm run test:portable` checks the app window and loopback access on a Linux desktop.
+
+**Managed Windows:** On a Windows build machine with the Windows SDK, set `WINDOWS_SIGN_CERT_SHA1` to the approved publisher's certificate thumbprint and `WINDOWS_SIGN_TIMESTAMP` to its RFC 3161 HTTPS timestamp service, then run `npm run package:windows -- --require-signing`. SignTool signs and verifies the launcher before packaging (`SIGNTOOL_EXE` can specify its path; `WINDOWS_SIGN_MACHINE_STORE=1` selects the machine store). Endpoint IT must approve the publisher and package under its policy. A checksum does not replace signing, and signing the launcher does not sign every file in the ZIP.
 
 ## Get started
 

@@ -8,14 +8,17 @@ import type { ExtractionRules } from '../shared/types';
  * handed to the Jira client.
  */
 
-if (typeof process.loadEnvFile === 'function') {
-  try {
-    process.loadEnvFile('.env');
-  } catch {
-    // No .env file: fine, demo mode or real environment variables.
+function localEnv(): NodeJS.ProcessEnv {
+  if (typeof process.loadEnvFile === 'function') {
+    try {
+      process.loadEnvFile('.env');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Could not read .env.');
+    }
+  } else {
+    console.error('This Node.js version cannot read .env files. Use Node.js 20.12 or newer.');
   }
-} else {
-  console.error('This Node.js version cannot read .env files. Use Node.js 20.12 or newer.');
+  return process.env;
 }
 
 const text = z
@@ -124,6 +127,7 @@ export interface OAuthConfig {
 }
 
 export interface AppConfig {
+  distDir?: string;
   oauth?: OAuthConfig;
   isProduction: boolean;
   host: string;
@@ -177,7 +181,7 @@ function normaliseSiteUrl(raw: string): { siteUrl: string; siteHost: string } | 
   }
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+export function loadConfig(env: NodeJS.ProcessEnv = localEnv()): AppConfig {
   const parsed = EnvSchema.safeParse(env);
   if (!parsed.success) {
     const problems = parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`);
