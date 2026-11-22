@@ -10,7 +10,7 @@ Windows devices. Ask endpoint IT for an approved signed build.
 
 To connect your own Jira site, copy .env.example to .env beside the launcher,
 configure the connection and restart. See README.md for OAuth registration,
-scope details and Windows SSO. OAuth opens the system browser for sign-in
+and scope details. OAuth opens the system browser for Atlassian sign-in
 only, then returns to the app window. Do not share your .env or customer map.
 Leave JIRA_WRITE_ACTIONS empty for read-only use.
 
