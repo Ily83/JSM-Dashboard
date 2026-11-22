@@ -2,6 +2,8 @@
 
 Wishlist items, not scheduled work. Items done in 0.2.0 are ticked; see RELEASE_NOTES.md.
 
+See the [acceptance checks](README.md#acceptance-checks-for-the-portable-app-oauth-and-history) for the three open validation items.
+
 ## Jira alert actions
 
 - [x] Add single-alert actions: Acknowledge, Unacknowledge (shown as **Open** on an acknowledged alert in Jira), Close, Assign, Add responder, Snooze, and Escalate. Verify whether the public API can match Jira's **Escalate to next** behavior before using that label.
@@ -47,10 +49,10 @@ Time-of-day, weekday, and business-hours patterns are not planned unless request
 ## Standalone app and authentication
 
 - [x] **Local browser OAuth sign-in:** Implemented Atlassian 3LO with backend-only in-memory tokens, refresh and session-specific caches. [Setup and scopes](README.md#sign-in-with-atlassian-oauth).
-- [ ] **Validate OAuth while the dedicated test site has Premium (until December 2026):** Start read-only: check consent, alert and attachment reads, refresh, and sign-out. Then enable only assign and snooze and try them on a disposable test alert as the signed-in user. Confirm the exact trial end date and run these checks before expiry. Separately, verify Windows SSO using an Entra-federated Atlassian account in a managed Windows work profile; Premium alone does not configure SSO. The local integration tests use a fake provider.
+- [ ] **Validate OAuth while the dedicated test site has Premium (until December 2026):** Live browser consent, alert listing (30 alerts synced, none skipped), and sign-out returning to the login page passed on 2026-11-22. Still verify attachment download, live token refresh, and assign and snooze on a disposable alert as the signed-in user. Confirm the exact trial end date. Entra SSO is out of scope for this test.
 - [ ] **Windows standalone portable app.** The original browser launcher is replaced in source by an Electron desktop window. Verify startup, shutdown, system-browser OAuth handoff, and upgrading on managed Windows with a build signed by an approved publisher.
   - [Build and signing instructions](README.md#windows-portable-app). Approved signing and managed Windows acceptance remain open.
-  - Distribution decision: Atlassian's documented code exchange requires a client secret. Keep an organization-owned secret on a confidential backend for a distributed app; never embed it in the installer. If the dashboard moves into an embedded window, sign in in the system browser and design a one-time, instance-bound handoff: the renderer does not share the browser's cookies. Only add persistent login if needed, with user-bound Windows credential protection.
+  - The desktop build implements a one-time handoff from the system browser. Atlassian's documented code exchange requires a client secret. Keep an organization-owned secret on a confidential backend for a distributed app; never embed it in the installer. Only add persistent login if needed, with user-bound Windows credential protection.
 
 ## Operator workflows and AI assistance
 

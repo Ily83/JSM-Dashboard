@@ -236,6 +236,7 @@ export function App() {
           theme={prefs.theme}
           onThemeChange={(theme) => patchPrefs({ theme })}
           showLiveControls={!onHistory}
+          canSignOut={status.data?.oauth === true}
           alarm={{
             on: alarmOn,
             tip: alarmTip(alarmOn, prefs.p1Sound, prefs.p1Desktop),

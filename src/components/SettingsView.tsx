@@ -36,6 +36,7 @@ import {
 } from '../state/views';
 import { CustomerBadge } from './ui/badges';
 import { primaryButton } from './ui/buttons';
+import { SignOutButton } from './SignOutButton';
 
 /**
  * Settings. Every control here writes to one of the preference stores, and
@@ -609,7 +610,7 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
               <dd>{modeLabel(status)}</dd>
               {status.oauth && <>
                 <dt className="text-muted">Atlassian account</dt>
-                <dd><form method="post" action="/api/auth/logout"><button className={primaryButton} type="submit">Sign out</button></form></dd>
+                <dd><SignOutButton /></dd>
               </>}
               <dt className="text-muted">Write actions</dt>
               <dd className="break-words">{writeActionsLabel(status)}</dd>
