@@ -6,13 +6,15 @@ A local dashboard for Jira Service Management Cloud Operations alerts. It is **r
 
 ## Windows portable app
 
-The desktop ZIP opens **Alert Center.exe** in its own window. Extract the entire ZIP before running it. No installer, administrator privileges, Node or npm are needed. Closing the window stops the local backend. The older v0.4.0 release is a browser launcher, not the desktop build.
+1. Extract the ZIP and open **Alert Center.exe**. No installer, Node or npm is needed.
+2. The app starts with sample data. To connect Jira, copy `.env.example` to `.env` beside the EXE, configure it and restart. See [OAuth](#sign-in-with-atlassian-oauth) for sign-in.
+3. Close the window to stop the app. For upgrades, copy your private `.env` and mapping file to the new folder. Desktop preferences stay in your Windows profile.
 
-The ZIP ships with sample data and a blank `.env.example`. For live use, copy it to `.env` beside the EXE, configure your Jira connection, then restart. OAuth opens the system browser for sign-in and returns to the app window. Use a private app registration for testing; never distribute a shared client secret with the ZIP. When upgrading, copy your private `.env` and any mapping file to the new folder. Desktop preferences live in the app's Windows user profile, separate from the browser.
+Build with `npm ci` and `npm run package:windows`. The ZIP and checksum are saved in `release/`. Run `npm run test:portable` for the Linux desktop smoke test. The older v0.4.0 release is a browser launcher, not the desktop build.
 
-**Build the ZIP:** Run `npm run package:windows` with npm dependencies installed. It verifies the pinned Electron runtime and writes the ZIP and SHA-256 checksum to `release/`. `npm run test:portable` checks the app window and loopback access on a Linux desktop.
+**Managed Windows:** Use an IT-approved signed build. On a Windows build machine with the Windows SDK, set `WINDOWS_SIGN_CERT_SHA1` and the HTTPS RFC 3161 `WINDOWS_SIGN_TIMESTAMP`, then run `npm run package:windows -- --require-signing`. Optionally set `SIGNTOOL_EXE` or `WINDOWS_SIGN_MACHINE_STORE=1`. Signing covers the launcher, not every ZIP file; a checksum is not a signature.
 
-**Managed Windows:** On a Windows build machine with the Windows SDK, set `WINDOWS_SIGN_CERT_SHA1` to the approved publisher's certificate thumbprint and `WINDOWS_SIGN_TIMESTAMP` to its RFC 3161 HTTPS timestamp service, then run `npm run package:windows -- --require-signing`. SignTool signs and verifies the launcher before packaging (`SIGNTOOL_EXE` can specify its path; `WINDOWS_SIGN_MACHINE_STORE=1` selects the machine store). Endpoint IT must approve the publisher and package under its policy. A checksum does not replace signing, and signing the launcher does not sign every file in the ZIP.
+Never distribute an OAuth client secret in the ZIP. Use a private registration for testing; distributed apps need a confidential backend for the secret.
 
 ## Get started
 
@@ -29,7 +31,7 @@ Open <http://127.0.0.1:5173>. To connect Jira:
 2. Set `JIRA_SITE_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN`. Create a token at <https://id.atlassian.com/manage-profile/security/api-tokens>.
 3. Restart the app. The demo badge disappears when connected.
 
-This uses a single API-token account. For browser sign-in instead, use OAuth below. Credentials stay on the backend, and `.env` is ignored by git. See `.env.example` for all settings.
+This uses one API-token account. For individual sign-in, use OAuth below. Credentials stay on the backend; `.env` is ignored by git.
 
 For production, run `npm run build` followed by `npm start`; open <http://127.0.0.1:8787>.
 
@@ -49,7 +51,7 @@ If you enable writes, also enable the corresponding console permissions and sign
 | Maintenance writes | `write:ops-config:jira-service-management` |
 | Assign or add responder (people picker) | Jira API `read:jira-user` |
 
-OAuth uses the [JSM Operations gateway](https://developer.atlassian.com/cloud/jira/service-desk-ops/security/oauth-2-3lo-apps/) and the signed-in user's Jira permissions. One browser session is active per local backend. Access and rotating refresh tokens are held in backend memory; a restart, eight-hour session expiry, or confirmed **Sign out** from the top bar requires a new sign-in. Signing out ends the local session; it does not sign you out of Atlassian or Windows. Preferences remain in the browser profile.
+OAuth uses the [JSM Operations gateway](https://developer.atlassian.com/cloud/jira/service-desk-ops/security/oauth-2-3lo-apps/) and the user's Jira permissions. One session is active per backend; tokens remain in memory. Restarting, session expiry after eight hours, or signing out requires a new sign-in. Local sign-out does not sign you out of Atlassian or Windows.
 
 ## Customers and services
 
@@ -60,7 +62,7 @@ Jira alerts do not have a dedicated customer field. Configure how customers are 
 - `CUSTOMER_PROPERTY_KEYS`: extra properties containing customer names.
 - `CUSTOMER_MAP_FILE`: a CSV or JSON mapping from alert entity to customers, for example `vm-acme-*,Acme`. Wildcards `*` and `?` are supported.
 
-These rules combine. Services are derived from configured tags or properties, falling back to the alert entity. Jira may omit extra properties from its alert list, so the app fetches them separately within its configured limits.
+Rules combine. Services come from configured tags or properties, falling back to the entity. Extra properties may require separate, limited detail reads.
 
 ## Dashboard
 
@@ -75,17 +77,15 @@ Preferences and saved views are stored in the browser. The P1 alarm watches all 
 
 ## Alert history
 
-Open **Alert history** to load alerts by creation date, up to 12 months back in UTC. Results include closed alerts still retained by Jira and respect `JIRA_ALERT_QUERY`.
+Open **Alert history** to search retained alerts by UTC creation date, up to 12 months back. `JIRA_ALERT_QUERY` still applies.
 
-**Analyze** offers an overview by current status and priority, daily and monthly trends, rankings by source/team/tag, recurring alerts, P1 hotspots, response times and alerts per customer. Daily closure counts use known close times only for alerts created in the selected UTC date range. Filters apply to every chart and drill-down and can be saved under **Investigations**. Detail key/value filters use only the properties Jira includes in list results; the app marks incomplete results rather than fetching every alert.
+**Analyze** shows trends, rankings, recurring alerts, P1 hotspots, response times and customer counts. Status is current, not a historical snapshot; daily closures cover alerts created in the selected range. Save filters under **Investigations**. Detail filters use only properties included in Jira's list results.
 
-Analysis runs in the backend in batches and continues while you use the dashboard. Progress is shown in History. Requests are paced and give interactive work priority, although Jira rate limits are shared. Results are held in memory until another analysis starts or the server restarts. A `+` or **Partial** indicates incomplete results. An alert with multiple customers counts once for each.
+Analysis runs in paced background batches. Results stay in memory until another analysis starts or the server restarts; **Partial** or `+` marks incomplete results. Jira rate limits are shared with dashboard requests. Alerts with multiple customers count once per customer.
 
 ## Workflows
 
-Open **Workflows** to draft an alert-created, alert-updated or status-changed rule. Choose team scope and conditions, then pick a log, Slack or email action. Preview uses the current fields of loaded alerts; it neither replays trigger events nor sends anything. Saved drafts stay in this browser and are separate from preferences backups.
-
-Copy the checklist and configure the flow in Jira Automation. Start with a log action on a dedicated test site. An authorized operator must enable the flow in Jira, which then runs it even when the dashboard is closed. Any destinations or connections are configured in Jira, not in the dashboard.
+Draft a rule under **Workflows**, then configure and enable it in Jira Automation. Preview uses loaded alerts and sends nothing. Drafts stay in this browser and are excluded from preferences backups. Start with a log action on a dedicated test site.
 
 ## Write actions
 
@@ -111,15 +111,17 @@ Open an alert to edit or delete notes and upload attachments up to 10 MiB. Enabl
 
 ### Acceptance checks for the portable app, OAuth and History
 
-1. **Managed Windows.** On the approved signing machine, build with `npm run package:windows -- --require-signing` as described [above](#windows-portable-app). Use a standard user on a managed Windows x64 device with normal SmartScreen and endpoint policy intact. Extract the package and double-click **Alert Center.exe**: demo should open in its own window, without a console or browser. Save a view, close the app, and verify the EXE exits and the loopback port is released. Extract a newer build to a fresh folder with the same port, copy only the private settings files you need, and verify the view is still there. For OAuth, sign in from inside the app; the system browser should handle Atlassian sign-in and the app should regain focus and show alerts. Do not bypass an endpoint block.
-2. **Live OAuth on a dedicated Premium test site.** Confirm the exact trial expiry in Atlassian billing. Start with `JIRA_WRITE_ACTIONS=none`, consent to the test site, and open a disposable alert and download a known, non-sensitive attachment. To verify refresh, run the local web build with `LOG_LEVEL=debug`, keep the same signed-in session until it crosses the provider's access-token lifetime, then perform an uncached alert read. Check for `Atlassian OAuth token refresh succeeded` in the backend log and verify the read succeeds without new consent. Sign out and verify that an alert API read is denied until you sign in again. Only then restart with `JIRA_WRITE_ACTIONS=assign,snooze`, grant the [additional scopes](#sign-in-with-atlassian-oauth), and verify both operations in Jira on a single disposable alert as the signed-in user. Restore read-only mode afterward. Do not share the client secret, cookies, or callback URLs.
-3. **High-volume History on a dedicated test site.** Pick a completed UTC range within the past year with more than 500 alerts and an independently known count of distinct alerts visible to the test account (for example, a retained fixture manifest). Account for `JIRA_ALERT_QUERY` in that count. Use `JIRA_AUTH_MODE=basic` with the test-site API-token credentials for this check, and explicitly confirm the site on the command line:
+These checks remain open; use a dedicated test site, not production.
+
+1. **Managed Windows:** Test an IT-approved signed ZIP with normal endpoint policy. Check demo startup, saved views after an upgrade, shutdown and port release, and OAuth handoff to the system browser and back. Do not bypass an endpoint block.
+2. **OAuth:** On a Premium test site, start read-only. Verify alert and attachment reads, token refresh after expiry, and sign-out. Then enable `assign,snooze` with the required scopes and test one disposable alert; restore read-only mode. Never share credentials, cookies or callback URLs.
+3. **High-volume History:** On a dedicated test site, choose a completed UTC range with over 500 alerts and an independently known distinct count, accounting for `JIRA_ALERT_QUERY`. Set `JIRA_AUTH_MODE=basic` and test-site credentials:
 
    ```bash
    npm run jira:validate-history -- --test-site https://YOUR-TEST-SITE.atlassian.net --from YYYY-MM-DD --to YYYY-MM-DD --expected COUNT
    ```
 
-   The command runs the application's paced History scan without dashboard polling, refuses a mismatched site, sends only GET requests, and stops after 300 requests or 10 minutes. Record the unique count, partial flag, pages, HTTP request count, duration, and any HTTP 429 responses. Zero 429s means throttling was not observed, not that Jira has no rate limit. A matching count is a sanity check; where available, also compare the results with the independent fixture IDs. Record whether the dataset actually exceeded Jira's pagination ceiling; don't create alerts or deliberately trigger throttling just to reach it.
+   The read-only scan stops after 300 requests or 10 minutes. Record the count, partial flag, pages, requests, duration and 429 responses; compare fixture IDs if available. Note whether the pagination ceiling was reached. Do not create alerts or deliberately trigger throttling.
 
 ## Operations and limitations
 
