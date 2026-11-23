@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "jira:test-alerts": "tsx scripts/jira-test-alerts.ts",
+    "jira:validate-history": "tsx scripts/jira-validate-history.ts",
     "jira:simulate": "tsx scripts/jira-simulate.ts",
     "e2e": "npm run build && playwright test --project=demo",
     "e2e:live": "npm run build && playwright test --project=live",

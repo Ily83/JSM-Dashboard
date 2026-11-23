@@ -28,6 +28,7 @@ test('customer scope limits KPIs and the table without touching saved views', as
 test('settings show the connection, write actions and a preferences backup', async ({ page }) => {
   await page.goto('/#/settings');
   await expect(page.locator('section[aria-labelledby="settings-connection"]')).toContainText(/Write actions\s*All · sample data only/);
+  await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
   const download = page.waitForEvent('download');
   await page.locator('section[aria-labelledby="settings-backup"]').getByRole('button', { name: /Export/ }).first().click();
   const file = await download;
@@ -36,6 +37,44 @@ test('settings show the connection, write actions and a preferences backup', asy
   expect(backup.format).toBe('jsm-alert-center-preferences');
   expect(Object.keys(backup.data)).toEqual(expect.arrayContaining(['prefs:v1', 'views:v1']));
   expect(text).not.toMatch(/apiToken|JIRA_|ATATT/);
+});
+
+test('OAuth sign-out is visible in the header and requires explicit confirmation', async ({ page }) => {
+  await page.route('**/api/status', async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), oauth: true } });
+  });
+  const logoutMethods: string[] = [];
+  await page.route('**/api/auth/logout', async (route) => {
+    logoutMethods.push(route.request().method());
+    await route.fulfill({
+      contentType: 'text/html', body: '<a href="/api/auth/start">Sign in with Atlassian</a>',
+    });
+  });
+
+  await page.goto('/#/all');
+  const headerButton = page.getByRole('banner').getByRole('button', { name: 'Sign out' });
+  const dialog = page.getByRole('dialog', { name: 'Sign out of Alert Center?' });
+  await headerButton.click();
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(headerButton).toBeFocused();
+  expect(logoutMethods).toEqual([]);
+
+  await page.goto('/#/settings');
+  const settingsButton = page.locator('section[aria-labelledby="settings-connection"]').getByRole('button', { name: 'Sign out' });
+  await settingsButton.click();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(settingsButton).toBeFocused();
+  expect(logoutMethods).toEqual([]);
+
+  await headerButton.click();
+  await dialog.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('link', { name: 'Sign in with Atlassian' })).toBeVisible();
+  expect(logoutMethods).toEqual(['POST']);
 });
 
 test('Save settings stays visible while scrolling and persists preferences', async ({ page }) => {

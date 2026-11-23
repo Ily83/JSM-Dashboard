@@ -4,12 +4,14 @@ import helmet from 'helmet';
 import { z } from 'zod';
 import type { ActionId } from '../shared/actions';
 import type { JiraConfig, OAuthConfig } from './config';
+import { log } from './logger';
 
 const AUTH = '/api/auth';
 const TTL = 8 * 60 * 60_000;
 const random = () => randomBytes(32).toString('base64url');
 const tokens = z.object({
   access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().int().positive(),
+  scope: z.string().optional(),
 });
 const sites = z.array(z.object({ id: z.string().uuid(), url: z.string(), scopes: z.array(z.string()) }));
 
@@ -47,6 +49,7 @@ export function createOAuthApp(
   const app = express();
   const callback = new URL(oauth.redirectUri);
   const scopes = oauthScopes(jira.writeActions);
+  const siteScopes = scopes.filter(scope => scope !== 'offline_access');
   const prefix = `jsm_${callback.port}_`;
   const options = { httpOnly: true, sameSite: 'lax' as const, path: '/' };
   let pending: { state: string; browser: string; until: number } | undefined;
@@ -133,14 +136,42 @@ export function createOAuthApp(
         redirect: 'error', signal: AbortSignal.timeout(15_000),
       });
       if (!response.ok) throw new Error('Site discovery failed.');
-      const site = sites.parse(await response.json()).find(s => s.url.replace(/\/$/, '') === jira.siteUrl &&
-        (!jira.cloudId || s.id === jira.cloudId) && scopes.every(scope => scope === 'offline_access' || s.scopes.includes(scope)));
+      const resources = sites.parse(await response.json());
       if (desktop && attempt !== desktopAttempt) {
         callbackPage('A newer sign-in attempt was started in Alert Center.', 409);
         return;
       }
-      if (!site) {
-        callbackPage('The configured Jira site or required permissions were not granted. Select the configured site when consenting.', 403);
+      // Atlassian can list a site's products separately. Combine their scopes
+      // only when both the configured URL and the resource ID match.
+      const bySiteId = new Map<string, Set<string>>();
+      for (const resource of resources) {
+        if (resource.url.replace(/\/$/, '') !== jira.siteUrl || (jira.cloudId && resource.id !== jira.cloudId)) continue;
+        const granted = bySiteId.get(resource.id) ?? new Set<string>();
+        for (const scope of resource.scopes) granted.add(scope);
+        bySiteId.set(resource.id, granted);
+      }
+      // The token response can include JSM Operations scopes omitted by
+      // accessible-resources. It proves the grant, not the site: still require
+      // an exact resource match and site-scoped Jira directory permissions.
+      const tokenScopes = new Set(grant.scope?.split(/\s+/));
+      const requiredForSite = siteScopes.filter(scope => !(
+        scope.includes(':ops-') && scope.endsWith(':jira-service-management') && tokenScopes.has(scope)
+      ));
+      const siteId = [...bySiteId].find(([, granted]) => requiredForSite.every(scope => granted.has(scope)))?.[0];
+      if (!siteId) {
+        if (bySiteId.size === 0) {
+          log.warn('Atlassian OAuth grant did not include configured Jira site', { resources: resources.length });
+          callbackPage('Atlassian did not return access to the configured Jira site. Select that site when consenting.', 403);
+          return;
+        }
+        const missing = [...bySiteId.values()]
+          .map(granted => requiredForSite.filter(scope => !granted.has(scope)))
+          .reduce((best, next) => next.length < best.length ? next : best);
+        log.warn('Atlassian OAuth grant missing required Jira scopes', {
+          missing: missing.join(', '),
+          ...(grant.scope ? { tokenMissing: siteScopes.filter(scope => !tokenScopes.has(scope)).join(', ') } : {}),
+        });
+        callbackPage(`Atlassian did not report these required permissions for the configured Jira site: ${missing.join(', ')}.`, 403);
         return;
       }
       const id = random();
@@ -156,7 +187,11 @@ export function createOAuthApp(
           if (Date.now() >= expires - 30_000) {
             // Atlassian rotates refresh tokens. Parallel Jira reads must share one exchange.
             refresh ??= exchange({ grant_type: 'refresh_token', refresh_token: grant.refresh_token })
-              .then(next => { grant = next; expires = Date.now() + next.expires_in * 1000; })
+              .then(next => {
+                grant = next;
+                expires = Date.now() + next.expires_in * 1000;
+                log.debug('Atlassian OAuth token refresh succeeded');
+              })
               .catch(error => { bearer.invalidate(); throw error; })
               .finally(() => { refresh = undefined; });
             await refresh;
@@ -166,7 +201,7 @@ export function createOAuthApp(
         },
       };
       const timer = setTimeout(() => bearer.invalidate(), TTL).unref();
-      const handler = dashboard(site.id, bearer);
+      const handler = dashboard(siteId, bearer);
       session?.bearer.invalidate();
       session = { id, bearer, handler };
       if (desktop) {

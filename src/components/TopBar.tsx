@@ -5,6 +5,7 @@ import { cn } from '../lib/cn';
 import { formatAbsolute, formatClock, formatRelative } from '../lib/format';
 import { useNow } from '../lib/now';
 import { MaintenanceIndicator } from './dashboard/opsWidgets';
+import { SignOutButton } from './SignOutButton';
 import { REFRESH_OPTIONS, type Theme } from '../state/prefs';
 
 interface TopBarProps {
@@ -20,6 +21,7 @@ interface TopBarProps {
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
   showLiveControls?: boolean;
+  canSignOut?: boolean;
   /** Customer scope control, on the alert pages only. */
   scope?: ReactNode;
   /** P1 alarm (sound and desktop notification) on or off. */
@@ -195,6 +197,7 @@ export function TopBar(props: Readonly<TopBarProps>) {
         >
           {dark ? <Sun size={15} aria-hidden /> : <Moon size={15} aria-hidden />}
         </button>
+        {props.canSignOut && <SignOutButton compact />}
       </div>
     </header>
   );

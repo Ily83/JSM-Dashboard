@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { JiraConfig } from '../server/config';
-import { JiraApiError, JiraClient } from '../server/jira/client';
+import { JiraApiError, JiraClient, MAX_OFFSET_PLUS_SIZE } from '../server/jira/client';
 import { JiraSource } from '../server/jira/source';
 import { redact } from '../server/logger';
 import { AlertStore } from '../server/services/alertStore';
+import { HistoryAnalysisService } from '../server/services/historyAnalysis';
 import { DAY_MS, HISTORY_MAX_OFFSET, HISTORY_PAGE_SIZE } from '../shared/history';
 import type { ExtractionRules } from '../shared/types';
 
@@ -197,6 +198,38 @@ describe('Jira integration (against a fake API)', () => {
     const params = jira.calls.at(-1)!.query;
     expect(Number(params.get('offset')) + Number(params.get('size'))).toBeLessThan(20_000);
   });
+
+  it('recovers a throttled request and scans every ID past the offset ceiling without per-alert reads', async () => {
+    const from = Date.UTC(2026, 0, 1);
+    const to = Date.UTC(2026, 0, 31);
+    const until = to + DAY_MS;
+    const middle = from + (until - from) / 2;
+    const count = MAX_OFFSET_PLUS_SIZE + 1;
+    const alerts = Array.from({ length: count }, (_, i) => {
+      const createdAt = new Date(i < 10_000 ? from + i : middle + i - 10_000).toISOString();
+      return { id: `history-${i}`, message: 'Synthetic alert', status: 'open', createdAt, updatedAt: createdAt };
+    });
+    const jira = fakeJira({ alerts });
+    const upstream = vi.fn<typeof fetch>(jira.fetchImpl);
+    // Throttle the first alert page but not tenant discovery.
+    upstream.mockImplementationOnce(jira.fetchImpl).mockResolvedValueOnce(jira.json({}, 429, { 'retry-after': '0' }));
+    const client = new JiraClient(config, 1, upstream);
+    const source = new JiraSource(config, rules, client);
+    const analysis = new HistoryAnalysisService(page => source.loadHistory(page), 0);
+    const job = analysis.start(from, to)!;
+    await vi.waitFor(() => expect(analysis.status()?.state).toBe('completed'), { timeout: 10_000 });
+
+    const [month] = analysis.results(job.id)!;
+    expect(month.partial).toBe(false);
+    expect(month.alerts).toHaveLength(count);
+    expect(new Set(month.alerts.map(alert => alert.id))).toEqual(new Set(alerts.map(alert => alert.id)));
+    const listCalls = jira.calls.slice(1);
+    expect(listCalls).toHaveLength(202); // Parent probe, then 100 + 101 pages.
+    expect(client.requestCount).toBe(204); // Also count discovery and one 429.
+    expect(jira.calls.every(call => call.method === 'GET')).toBe(true);
+    expect(listCalls.every(call => call.path.endsWith('/v1/alerts') &&
+      Number(call.query.get('offset')) + Number(call.query.get('size')) < MAX_OFFSET_PLUS_SIZE)).toBe(true);
+  }, 15_000);
 
   it('light sync: asks only for open alerts and looks up the ones that disappeared', async () => {
     const alerts = makeAlerts(5);
