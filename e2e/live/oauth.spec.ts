@@ -39,6 +39,13 @@ function skipAll(reason: string): never {
   throw new Error(reason); // not reached: test.skip ends the hook
 }
 
+/** Skips this test when the condition holds. The list reporter hides skip reasons, so it is printed too. */
+function skipWhen(condition: boolean, reason: string) {
+  if (!condition) return;
+  console.log(`live-oauth skipped: ${reason}`);
+  test.skip(true, reason);
+}
+
 function outcome(label: string, result: ActionResult) {
   note('Jira outcome', `${label}: ${result.message ?? (result.state === 'done' ? 'done (no text from Jira)' : 'sent, not confirmed by Jira yet')}`);
 }
@@ -167,7 +174,7 @@ test.describe.serial('live OAuth', () => {
   });
 
   test('acknowledge, then unacknowledge', async ({ page }) => {
-    test.skip(!enabled('acknowledge', 'unacknowledge'), disabled('acknowledge', 'unacknowledge'));
+    skipWhen(!enabled('acknowledge', 'unacknowledge'), disabled('acknowledge', 'unacknowledge'));
     await page.goto('/#/active');
     const before = (await freshAlert(page, target.id))!;
     // Toggle away from the current state and back, so the alert ends as it started.
@@ -186,7 +193,7 @@ test.describe.serial('live OAuth', () => {
   });
 
   test('add a note, edit it, delete it', async ({ page }) => {
-    test.skip(!enabled('addNote'), disabled('addNote'));
+    skipWhen(!enabled('addNote'), disabled('addNote'));
     let p = await openAlert(page);
     const text = `Note from the OAuth e2e run ${run}`;
     await p.getByRole('textbox', { name: 'New note' }).fill(text);
@@ -214,7 +221,7 @@ test.describe.serial('live OAuth', () => {
   });
 
   test('add a tag, then remove it', async ({ page }) => {
-    test.skip(!enabled('addTags'), disabled('addTags'));
+    skipWhen(!enabled('addTags'), disabled('addTags'));
     const p = await openAlert(page);
     const tag = `e2e-oauth-${run}`;
     await p.getByRole('button', { name: 'Add tags' }).click();
@@ -233,7 +240,7 @@ test.describe.serial('live OAuth', () => {
   });
 
   test('assign to the signed-in user', async ({ page }) => {
-    test.skip(!enabled('assign'), disabled('assign'));
+    skipWhen(!enabled('assign'), disabled('assign'));
     const p = await openAlert(page);
     const me = await getJson<DirectoryUser | null>(page, '/api/directory/me');
     expect(me, 'the signed-in Atlassian account (scope read:jira-user)').toBeTruthy();
@@ -256,7 +263,7 @@ test.describe.serial('live OAuth', () => {
   });
 
   test('snooze for 5 minutes', async ({ page }) => {
-    test.skip(!enabled('snooze'), disabled('snooze'));
+    skipWhen(!enabled('snooze'), disabled('snooze'));
     await openAlert(page);
     const before = (await freshAlert(page, target.id))!;
     const endTime = new Date(Date.now() + 5 * 60_000).toISOString();
@@ -281,7 +288,7 @@ test.describe.serial('live OAuth', () => {
   });
 
   test('upload a text attachment, list it and get its download link', async ({ page }) => {
-    test.skip(!enabled('uploadAttachment'), disabled('uploadAttachment'));
+    skipWhen(!enabled('uploadAttachment'), disabled('uploadAttachment'));
     const p = await openAlert(page);
     const name = `alert-center-e2e-${run}.txt`;
     await p.getByRole('button', { name: 'Attachments', exact: true }).click();
@@ -313,13 +320,13 @@ test.describe.serial('live OAuth', () => {
   });
 
   test('create a 15-minute global maintenance window, see it, cancel it', async ({ page }) => {
-    test.skip(!enabled('maintenance'), `${disabled('maintenance')} (scope write:ops-config)`);
+    skipWhen(!enabled('maintenance'), `${disabled('maintenance')} (scope write:ops-config)`);
     await page.goto('/#/active');
     // A maintenance always switches something. This one only restates a global policy's current
     // state, so nothing changes; it never switches off an integration.
     const { targets } = await getJson<MaintenanceTargetsResponse>(page, '/api/ops/maintenance-targets');
     const policy = targets.find((t) => t.type === 'policy' && t.teamId === null && t.enabled !== null);
-    test.skip(!policy, 'No global alert policy with a known state on the site. This test never switches off an integration; add a global alert policy to run it.');
+    skipWhen(!policy, 'No global alert policy with a known state on the site. This test never switches off an integration; add a global alert policy to run it.');
     const state = policy!.enabled ? 'enabled' : 'disabled';
 
     const now = Date.now();
