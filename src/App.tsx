@@ -39,6 +39,7 @@ import { PageErrorBoundary } from './components/PageErrorBoundary';
 // Pages other than the alerts page load on first visit, keeping the initial bundle small.
 const HistoryView = lazy(() => import('./components/HistoryView').then((m) => ({ default: m.HistoryView })));
 const WorkflowsView = lazy(() => import('./components/WorkflowsView').then((m) => ({ default: m.WorkflowsView })));
+const NotificationsView = lazy(() => import('./components/NotificationsView').then((m) => ({ default: m.NotificationsView })));
 const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
 const PAGE_FALLBACK = (
   <div className="grid min-h-0 flex-1 content-start gap-2 p-4" aria-busy="true">
@@ -90,6 +91,7 @@ function pageTitle(page: Route['page'], views: ViewsData, sectionLabel: string):
   if (page === 'settings') return 'Settings';
   if (page === 'history') return 'Alert history';
   if (page === 'workflows') return 'Workflows';
+  if (page === 'notifications') return 'Alert notifications';
   return views.saved.find((v) => v.id === views.activeViewId)?.name ?? sectionLabel;
 }
 
@@ -295,6 +297,7 @@ export function App() {
             />
           )}
           {onHistory && <HistoryView />}
+          {route.page === 'notifications' && <NotificationsView />}
           {route.page === 'workflows' && <WorkflowsView alerts={loadedAlerts} site={status.data?.site} ready={alertsQuery.data !== undefined}
             limited={Boolean(meta?.truncated || meta?.stale || meta?.skipped)} />}
         </Suspense>

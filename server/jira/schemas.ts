@@ -194,3 +194,43 @@ export const OnCallResponseSchema = z.looseObject({
   onCallParticipants: z.array(OnCallParticipantSchema).nullish(),
   onCallUsers: z.array(z.string()).nullish(),
 });
+
+// ---- Personal notification settings (contacts, notification rules) ----------
+
+export const RawContactSchema = z.looseObject({
+  id: z.string().min(1),
+  method: z.string(),
+  to: z.string(),
+  status: z.looseObject({ enabled: z.boolean().nullish() }).nullish(),
+  applyOrder: z.number().nullish(),
+});
+export type RawContact = z.infer<typeof RawContactSchema>;
+
+const RawTimeSchema = { startHour: z.number(), startMin: z.number(), endHour: z.number(), endMin: z.number() };
+export const RawNotificationRuleSchema = z.looseObject({
+  id: z.string().min(1),
+  name: z.string().nullish(),
+  actionType: z.string(),
+  enabled: z.boolean().nullish(),
+  order: z.number().nullish(),
+  criteria: z.looseObject({
+    type: z.string(),
+    query: z.string().nullish(),
+    conditions: z.array(z.looseObject({
+      field: z.string(), key: z.string().nullish(), not: z.boolean().nullish(), operation: z.string(), expectedValue: z.string().nullish(),
+    })).nullish(),
+  }).nullish(),
+  timeRestriction: z.union([
+    z.looseObject({ type: z.literal('time-of-day'), restriction: z.looseObject(RawTimeSchema) }),
+    z.looseObject({ type: z.literal('weekday-and-time-of-day'), restrictions: z.array(z.looseObject({ ...RawTimeSchema, startDay: z.string(), endDay: z.string() })) }),
+  ]).nullish(),
+  notificationTime: z.array(z.string()).nullish(),
+  repeat: z.looseObject({ enabled: z.boolean().nullish(), loopAfter: z.number().nullish() }).nullish(),
+  steps: z.array(z.looseObject({
+    id: z.string().min(1), sendAfter: z.number().nullish(), enabled: z.boolean().nullish(),
+    contact: z.looseObject({ method: z.string(), to: z.string() }),
+  })).nullish(),
+});
+export type RawNotificationRule = z.infer<typeof RawNotificationRuleSchema>;
+
+export const CreatedIdSchema = z.looseObject({ id: z.string().min(1) });

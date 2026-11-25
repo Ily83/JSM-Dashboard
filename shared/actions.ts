@@ -40,6 +40,7 @@ export const ACTION_IDS = [
   'removeTags',
   'customAction',
   'maintenance',
+  'notifications',
 ] as const;
 export type ActionId = (typeof ACTION_IDS)[number];
 
@@ -64,6 +65,7 @@ export const ACTION_LABEL: Record<ActionId, string> = {
   removeTags: 'Remove tags',
   customAction: 'Run action',
   maintenance: 'Maintenance windows',
+  notifications: 'Notification settings',
 };
 
 export const NOTE_MAX_LENGTH = 25_000;

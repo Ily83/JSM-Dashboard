@@ -204,7 +204,7 @@ export function DetailPanel({ alert, alertId, onClose }: Readonly<DetailPanelPro
 
   const responders = base.responders;
   // With the action buttons in the same row, the link gets a shorter label.
-  const alertActionsOn = [...allowed].some((id) => id !== 'maintenance');
+  const alertActionsOn = [...allowed].some((id) => id !== 'maintenance' && id !== 'notifications');
   const compact = alertActionsOn;
   const properties = detail ? Object.entries(detail.extraProperties) : [];
   const loading = detailQuery.isPending;

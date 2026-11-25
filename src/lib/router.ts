@@ -8,7 +8,7 @@ import { isSectionId, type SectionId } from '../config/sections';
  * needed.
  */
 export interface Route {
-  page: 'alerts' | 'settings' | 'history' | 'workflows';
+  page: 'alerts' | 'settings' | 'history' | 'workflows' | 'notifications';
   section: SectionId;
   alertId: string | null;
   /** View parameters as a query string (everything except `alert`); '' when none. */
@@ -17,7 +17,7 @@ export interface Route {
 
 export function parseHash(hash: string): Route {
   const [path = '', query = ''] = hash.replace(/^#\/?/, '').split('?');
-  if (path === 'settings' || path === 'history' || path === 'workflows') return { page: path, section: 'all', alertId: null, view: '' };
+  if (path === 'settings' || path === 'history' || path === 'workflows' || path === 'notifications') return { page: path, section: 'all', alertId: null, view: '' };
   const params = new URLSearchParams(query);
   const alertId = params.get('alert');
   params.delete('alert');

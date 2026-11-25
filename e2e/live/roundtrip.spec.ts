@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { loadConfig } from '../../server/config';
-import { JiraClient } from '../../server/jira/client';
+import { JiraApiError, JiraClient } from '../../server/jira/client';
 import { alarms, expect, panel, recordAlarms, test } from '../fixtures';
 import { localEnv } from './oauthSession';
 
@@ -18,6 +18,22 @@ const summary = `E2E ${run}: storage latency above 200 ms`;
 // even when .env selects OAuth for the operator's own instance.
 const jira = loadConfig({ ...localEnv(), JIRA_AUTH_MODE: 'basic' }).jira;
 const client = jira ? new JiraClient(jira, 2) : null;
+
+/**
+ * Runs one of the test's own Jira calls, waiting out Jira's rate limit. A
+ * freshly started backend can use up the site's budget while it loads many
+ * closed alerts, and the shared client then refuses at once instead of waiting.
+ */
+async function patiently<T>(call: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await call();
+    } catch (error) {
+      if (!(error instanceof JiraApiError) || error.kind !== 'rate_limit' || attempt >= 6) throw error;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(error.retryAfterMs ?? 5000, 30_000)));
+    }
+  }
+}
 
 /** Asks the backend for fresh data until the check passes (the backend caches for 5 s). */
 async function refreshUntil(page: Page, check: () => Promise<boolean>, timeout = 60_000): Promise<void> {
@@ -45,8 +61,8 @@ test.describe.serial('live round trip', () => {
 
   test.afterAll(async () => {
     if (!client) return;
-    const page = await client.listAlerts({ query: `tag: ${TAG} AND status: open`, offset: 0, size: 100 });
-    for (const alert of page.alerts) await client.performAction(alert.id, { action: 'close' }).catch(() => undefined);
+    const page = await patiently(() => client.listAlerts({ query: `tag: ${TAG} AND status: open`, offset: 0, size: 100 }));
+    for (const alert of page.alerts) await patiently(() => client.performAction(alert.id, { action: 'close' })).catch(() => undefined);
   });
 
   test('a P1 created in Jira appears in the app and rings the P1 alarm', async ({ page }) => {
@@ -56,7 +72,7 @@ test.describe.serial('live round trip', () => {
     await page.getByRole('button', { name: 'P1 alarm' }).click();
     await page.waitForTimeout(1000);
 
-    const created = await client!.createAlert({
+    const created = await patiently(() => client!.createAlert({
       message: summary,
       alias: `${TAG}-${run}`,
       priority: 'P1',
@@ -65,7 +81,7 @@ test.describe.serial('live round trip', () => {
       tags: [TAG, 'customer:E2E Test Co'],
       extraProperties: { service: 'Storage', runbook: 'https://wiki.example.com/runbooks/storage-latency' },
       actions: ['Run diagnostics'],
-    });
+    }));
     expect(created.alertId, 'Jira confirmed the new alert').toBeTruthy();
     alertId = created.alertId!;
 
@@ -81,19 +97,19 @@ test.describe.serial('live round trip', () => {
 
     await p.getByRole('button', { name: 'Acknowledge' }).click();
     await expect(p.getByRole('status')).toContainText(/acknowledged/i, { timeout: 30_000 });
-    expect((await client!.getAlert(alertId)).acknowledged).toBe(true);
+    expect((await patiently(() => client!.getAlert(alertId))).acknowledged).toBe(true);
 
     const note = `Note from the e2e run ${run}`;
     await p.getByRole('textbox', { name: 'New note' }).fill(note);
     await p.getByRole('button', { name: 'Add note' }).click();
     await expect(p.locator('li', { hasText: note })).toBeVisible({ timeout: 30_000 });
-    expect((await client!.listNotes(alertId)).values.map((n) => n.note)).toContain(note);
+    expect((await patiently(() => client!.listNotes(alertId))).values.map((n) => n.note)).toContain(note);
 
     await p.getByRole('button', { name: 'Add tags' }).click();
     await p.getByRole('textbox', { name: /New tags/ }).fill('e2e-tag');
     await p.getByRole('textbox', { name: /New tags/ }).press('Enter');
     await expect(p.getByRole('button', { name: 'Remove tag e2e-tag' })).toBeVisible({ timeout: 30_000 });
-    expect((await client!.getAlert(alertId)).tags).toContain('e2e-tag');
+    expect((await patiently(() => client!.getAlert(alertId))).tags).toContain('e2e-tag');
   });
 
   test('a custom action gets an answer from Jira', async ({ page }) => {
@@ -113,7 +129,7 @@ test.describe.serial('live round trip', () => {
   test('closing in Jira shows up in the app', async ({ page }) => {
     await page.goto(`/#/active?alert=${encodeURIComponent(alertId)}`);
     await expect(panel(page).locator('h2')).toHaveText(summary);
-    await client!.performAction(alertId, { action: 'close' });
+    await patiently(() => client!.performAction(alertId, { action: 'close' }));
     await refreshUntil(page, async () => (await panel(page).locator('header').getByText('Closed', { exact: true }).count()) > 0);
   });
 });

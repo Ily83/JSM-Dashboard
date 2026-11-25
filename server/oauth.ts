@@ -17,11 +17,16 @@ const tokens = z.object({
 type Grant = z.infer<typeof tokens>;
 const sites = z.array(z.object({ id: z.uuid(), url: z.string(), scopes: z.array(z.string()) }));
 
+/** Actions on Operations configuration rather than on alerts. */
+const CONFIG_ACTIONS = new Set<ActionId>(['maintenance', 'notifications']);
+
 export function oauthScopes(actions: ActionId[]) {
   const scopes = ['offline_access', 'read:ops-alert:jira-service-management', 'read:ops-config:jira-service-management'];
-  if (actions.some(a => a !== 'maintenance' && a !== 'removeTags' && a !== 'deleteNote')) scopes.push('write:ops-alert:jira-service-management');
+  if (actions.some(a => !CONFIG_ACTIONS.has(a) && a !== 'removeTags' && a !== 'deleteNote')) scopes.push('write:ops-alert:jira-service-management');
   if (actions.includes('removeTags') || actions.includes('deleteNote')) scopes.push('delete:ops-alert:jira-service-management');
-  if (actions.includes('maintenance')) scopes.push('write:ops-config:jira-service-management');
+  if (actions.some(a => CONFIG_ACTIONS.has(a))) scopes.push('write:ops-config:jira-service-management');
+  // Removing a contact, a notification rule or one of its steps.
+  if (actions.includes('notifications')) scopes.push('delete:ops-config:jira-service-management');
   if (actions.includes('assign') || actions.includes('addResponder')) scopes.push('read:jira-user');
   return scopes;
 }
