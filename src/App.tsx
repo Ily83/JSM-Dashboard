@@ -34,6 +34,7 @@ import { useStore } from './lib/store';
 import { dashboardStore, setDashboardCollapsed } from './state/dashboard';
 import { DENSITIES, patchPrefs, prefsStore } from './state/prefs';
 import { clearAllFilters, openSection, patchCurrentView, viewsStore, type ViewsData, type ViewState } from './state/views';
+import { PageErrorBoundary } from './components/PageErrorBoundary';
 
 // Pages other than the alerts page load on first visit, keeping the initial bundle small.
 const HistoryView = lazy(() => import('./components/HistoryView').then((m) => ({ default: m.HistoryView })));
@@ -284,6 +285,7 @@ export function App() {
           </output>
         )}
 
+        <PageErrorBoundary key={route.page}>
         <Suspense fallback={PAGE_FALLBACK}>
           {route.page === 'settings' && (
             <SettingsView
@@ -296,6 +298,7 @@ export function App() {
           {route.page === 'workflows' && <WorkflowsView alerts={loadedAlerts} site={status.data?.site} ready={alertsQuery.data !== undefined}
             limited={Boolean(meta?.truncated || meta?.stale || meta?.skipped)} />}
         </Suspense>
+        </PageErrorBoundary>
         {route.page === 'alerts' && (
           <div className="relative flex min-h-0 flex-1">
             <main className="flex min-w-0 flex-1 flex-col">

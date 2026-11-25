@@ -2,7 +2,7 @@
 
 Wishlist items, not scheduled work. Items done in 0.2.0 are ticked; see RELEASE_NOTES.md.
 
-See the [acceptance checks](README.md#acceptance-checks-for-the-portable-app-oauth-and-history) for the three open validation items.
+See the [acceptance checks](README.md#acceptance-checks-for-the-portable-app-and-history) for the two open validation items.
 
 ## Jira alert actions
 
@@ -49,7 +49,8 @@ Time-of-day, weekday, and business-hours patterns are not planned unless request
 ## Standalone app and authentication
 
 - [x] **Local browser OAuth sign-in:** Implemented Atlassian 3LO with backend-only in-memory tokens, refresh and session-specific caches. [Setup and scopes](README.md#sign-in-with-atlassian-oauth).
-- [ ] **Validate OAuth while the dedicated test site has Premium (until December 2026):** Live browser consent, alert listing (30 alerts synced, none skipped), and sign-out returning to the login page passed on 2026-11-22. Still verify attachment download, live token refresh, and assign and snooze on a disposable alert as the signed-in user. Confirm the exact trial end date.
+- [x] **Validate OAuth while the dedicated test site has Premium (until December 2026):** Live browser consent, alert listing (30 alerts synced, none skipped), and sign-out returning to the login page passed on 2026-11-22.
+  - Done on 2026-11-25 with `npm run e2e:live:oauth`: all 9 checks passed as the signed-in user on a disposable alert. They covered acknowledge, notes, tags, assign, snooze, attachment upload and download link, a global maintenance window, and reads after the access token expired and was refreshed. The trial ends on 2026-12-19.
 - [ ] **Windows standalone portable app.** The original browser launcher is replaced in source by an Electron desktop window. Verify startup, shutdown, system-browser OAuth handoff, and upgrading on managed Windows with a build signed by an approved publisher.
   - [Build and signing instructions](README.md#windows-portable-app). Approved signing and managed Windows acceptance remain open.
   - The desktop build implements a one-time handoff from the system browser. Atlassian's documented code exchange requires a client secret. Keep an organization-owned secret on a confidential backend for a distributed app; never embed it in the installer. Only add persistent login if needed, with user-bound Windows credential protection.

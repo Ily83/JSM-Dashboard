@@ -48,16 +48,17 @@ export interface ViewFile {
   view: SavedView;
 }
 
+// Both builders return copies: changing an exported file must never change the live settings.
 export function buildPreferencesFile(parts: readonly TransferPart[], views: Pick<ViewsData, 'saved' | 'defaultViewId'>, now = new Date()): PreferencesFile {
   const data: Record<string, unknown> = {};
-  for (const part of parts) data[part.key] = part.read();
+  for (const part of parts) data[part.key] = structuredClone(part.read());
   // Saved views only: the live screen state is not part of a backup.
-  data[VIEWS_KEY] = { saved: views.saved, defaultViewId: views.defaultViewId };
+  data[VIEWS_KEY] = structuredClone({ saved: views.saved, defaultViewId: views.defaultViewId });
   return { format: PREFERENCES_FORMAT, version: TRANSFER_VERSION, exportedAt: now.toISOString(), data };
 }
 
 export function buildViewFile(view: SavedView, now = new Date()): ViewFile {
-  return { format: VIEW_FORMAT, version: TRANSFER_VERSION, exportedAt: now.toISOString(), view };
+  return { format: VIEW_FORMAT, version: TRANSFER_VERSION, exportedAt: now.toISOString(), view: structuredClone(view) };
 }
 
 // ---- Import: parse and validate ---------------------------------------------

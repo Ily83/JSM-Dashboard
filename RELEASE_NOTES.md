@@ -2,6 +2,25 @@
 
 Newest release first. Each release lists what changed, how to install or update, and what is known not to work yet.
 
+## 0.4.2 (2026-11-25)
+
+### Update
+
+```bash
+git pull
+npm ci
+```
+
+### Fixed
+
+- **A page that cannot load no longer blanks the app:** if History, Workflows or Settings cannot be loaded, for example after the server lost its files, the page shows "This page could not be loaded" with a **Reload** button, and the rest of the app stays usable.
+- **Settings export:** an exported backup or view is now a copy, so changing it can never change the live settings.
+
+### Changed
+
+- **SonarQube runs locally only:** the GitHub Actions SonarQube job is removed. GitHub checks every pull request with the type check, tests, build, demo browser tests and the portable app smoke test.
+- **Backlog:** OAuth validation on the Premium test site is done (all 9 live checks passed on 2026-11-25).
+
 ## 0.4.1 (2026-11-25)
 
 Quality pass on 0.4.0: SonarQube's quality gate passes again, every pull request is checked automatically, and the writes made as the signed-in OAuth user can be tested live.
