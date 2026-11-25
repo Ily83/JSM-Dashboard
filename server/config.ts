@@ -151,6 +151,8 @@ export interface AppConfig {
   customerMapRules?: number;
   /** Non-fatal configuration problems, shown in Settings. Never contain secrets. */
   warnings: string[];
+  /** Set by the desktop app: its window can edit the configuration file. */
+  configEditor?: boolean;
 }
 
 /**
@@ -173,7 +175,7 @@ export function parseWriteActions(raw: string | undefined): { actions: ActionId[
   return { actions: ACTION_IDS.filter((id) => actions.has(id)), unknown };
 }
 
-function normaliseSiteUrl(raw: string): { siteUrl: string; siteHost: string } | null {
+export function normaliseSiteUrl(raw: string): { siteUrl: string; siteHost: string } | null {
   try {
     const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
     if (url.protocol !== 'https:') return null;

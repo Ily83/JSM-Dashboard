@@ -35,6 +35,7 @@ import {
   viewsStore,
 } from '../state/views';
 import { CustomerBadge } from './ui/badges';
+import { ConfigEditor } from './ConfigEditor';
 import { primaryButton } from './ui/buttons';
 import { SignOutButton } from './SignOutButton';
 
@@ -663,6 +664,12 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
             <span className="text-subtle">Backend not reachable</span>
           )}
         </Card>
+
+        {status?.configEditor && (
+          <Card id="config" title="Configuration file">
+            <ConfigEditor />
+          </Card>
+        )}
 
         <BackupCard />
 

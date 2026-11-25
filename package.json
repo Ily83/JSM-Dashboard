@@ -1,6 +1,6 @@
 {
   "name": "jira-operations-alert-center",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Read-only alert console for Jira Service Management Cloud Operations",
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",

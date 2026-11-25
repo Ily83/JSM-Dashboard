@@ -136,6 +136,8 @@ export interface ExtractionRules {
 
 export interface StatusResponse {
   oauth?: boolean;
+  /** Desktop app only: its window can edit the configuration file. */
+  configEditor?: boolean;
   mode: AppMode;
   /** True when no write action is enabled. */
   readOnly: boolean;

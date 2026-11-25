@@ -7,8 +7,19 @@ A local dashboard for Jira Service Management Cloud Operations alerts. It is **r
 ## Windows portable app
 
 1. Extract the ZIP and open **Alert Center.exe**. No installer, Node or npm is needed.
-2. The app starts with sample data. To connect Jira, copy `.env.example` to `.env` beside the EXE, configure it and restart. See [OAuth](#sign-in-with-atlassian-oauth) for sign-in.
+2. The app starts with sample data. To connect Jira, open **Settings**, then **Configuration file**, fill in the Jira site and sign-in, and select **Save and reconnect**. See [OAuth](#sign-in-with-atlassian-oauth) for sign-in.
 3. Close the window to stop the app. For upgrades, copy your private `.env` and mapping file to the new folder. Desktop preferences stay in your Windows profile.
+
+### Configuration file in the desktop app
+
+**Settings > Configuration file** edits the `.env` file beside the EXE and applies it without a restart. The sign-in page links to the same settings, so a wrong site or client ID can be corrected while signed out.
+
+- **Editable:** the Jira site and sign-in, the customer and service rules, the mapping file, which alerts are loaded, and the "Open in Jira" link. Comments and other lines in the file are kept.
+- **Hand edit only:** `JIRA_WRITE_ACTIONS` (the app cannot switch its own write actions on), `PORT`, `HOST`, the OAuth callback and the tuning values. Restart after changing these.
+- **Secrets** are write-only: the API token and OAuth client secret are never shown again. They are stored in `.env` as before, so keep that file private.
+- **Changing the Jira site** asks for the API token again, and removes a saved `JIRA_CLOUD_ID` of the old site. With OAuth, a saved API token is removed instead.
+- **Saving reconnects:** with OAuth you sign in again. Values set in the computer's environment win over the file and show as locked.
+- Only the app's own window can read or change these settings; a browser on the same computer is refused. In browser mode (`npm start`) the file stays a hand edit.
 
 Build with `npm ci` and `npm run package:windows`. The ZIP and checksum are saved in `release/`. Run `npm run test:portable` for the Linux desktop smoke test. The older v0.4.0 release is a browser launcher, not the desktop build.
 

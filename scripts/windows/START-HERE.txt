@@ -8,11 +8,16 @@ Jira Operations - Alert Center (portable, Windows x64)
 An unsigned ZIP is for development testing and is not suitable for managed
 Windows devices. Ask endpoint IT for an approved signed build.
 
-To connect your own Jira site, copy .env.example to .env beside the launcher,
-configure the connection and restart. See README.md for OAuth registration,
-and scope details. OAuth opens the system browser for Atlassian sign-in
-only, then returns to the app window. Do not share your .env or customer map.
-Leave JIRA_WRITE_ACTIONS empty for read-only use.
+To connect your own Jira site, open Settings > Configuration file in the app,
+fill in the Jira site and sign-in, and select "Save and reconnect". The app
+writes the .env file beside the launcher; no restart is needed. See README.md
+for OAuth registration and scope details. OAuth opens the system browser for
+Atlassian sign-in only, then returns to the app window. Do not share your
+.env or customer map.
+
+Write actions, the port and the tuning values are not in Settings: edit .env
+by hand (.env.example describes every setting) and restart. Leave
+JIRA_WRITE_ACTIONS empty for read-only use.
 
 To upgrade, stop the running app, extract the new ZIP to a fresh folder, then
 copy your .env and any customer mapping file across. Saved views use the

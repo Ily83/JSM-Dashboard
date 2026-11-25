@@ -2,6 +2,44 @@
 
 Newest release first. Each release lists what changed, how to install or update, and what is known not to work yet.
 
+## 0.5.0 (2026-11-25)
+
+The desktop app can edit its configuration file from Settings.
+
+### Update
+
+```bash
+git pull
+npm ci
+npm run package:windows
+```
+
+Extract the new ZIP to a fresh folder and copy your `.env` and mapping file across.
+
+### Added
+
+- **Settings > Configuration file (desktop app only):** set the Jira site and sign-in, the customer and service rules, the mapping file, which alerts are loaded and the "Open in Jira" link, then **Save and reconnect**. The app writes the `.env` file beside the EXE, keeps its comments and other lines, and applies the change without a restart. See [Configuration file in the desktop app](README.md#configuration-file-in-the-desktop-app).
+- **Settings while signed out:** the desktop sign-in page links to **Connection settings**, so a wrong site or client ID can be corrected without editing the file.
+
+### Safety
+
+- Write actions (`JIRA_WRITE_ACTIONS`), the port, the host and the OAuth callback cannot be changed from the window; they stay a hand edit of `.env`.
+- The API token and the OAuth client secret are write-only and never shown again.
+- Changing the Jira site asks for the API token again, so a saved token is never sent to another site. With OAuth, the unused token is removed.
+- Only the app's own window can read or save the settings. A browser on the same computer gets 403, and a save must come from the app's own page.
+- An invalid change is refused with the name of the setting, and nothing is written.
+
+### Changed
+
+- **The desktop app always opens at `http://localhost:PORT`,** also with sample data or an API token (it was `http://127.0.0.1:PORT`). Saved views and preferences now survive a change of sign-in method. If you used the 0.4 desktop app without OAuth, export your settings there first (Settings > Backup) and import them after the update.
+- Saving the configuration starts a fresh connection: with OAuth you sign in again.
+
+### Verification
+
+- 444 unit and component tests, including the file editor (comments, quoting, Windows line endings), the access rules and the switch between sample data, API token and OAuth.
+- The Linux smoke test of the desktop build now reads the settings in the real window, saves one, sees it on the settings page, and confirms that a browser is refused.
+- Not yet run: native Windows.
+
 ## 0.4.2 (2026-11-25)
 
 ### Update

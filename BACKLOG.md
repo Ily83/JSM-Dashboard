@@ -32,6 +32,7 @@ Reuse the History date, customer, and tag filters. Label rankings as partial whe
 
 - [x] **High-volume background analysis:** Scan beyond 500 alerts per month in paced, low-priority batches; split dense windows around Jira's pagination limit and label incomplete results. Progress and cancellation are available; jobs and results remain in memory until the backend restarts or another analysis starts.
 - [ ] **Validate high-volume analysis on a dedicated Jira test site:** Confirm request cost, rate limits, pagination and completeness against representative production-like volumes. Never use live writes for testing.
+  - Test data is ready: over 500 alerts tagged `alert-center-volume` were created on the trial site on 2026-11-25. The validation script only accepts a finished UTC day, so run it from 2026-11-26 with `--from 2026-11-25 --to 2026-11-25`.
 - [x] **Historical overview:** Total alerts and breakdowns by current status and priority for the selected creation-date range.
 - [x] **Daily trends:** UTC creation counts, daily average, and a comparison to known closure dates for the same creation cohort.
 - [x] **Historical rankings:** Rank sources, team responders and tags, with drill-down and one count per alert per team or tag.
@@ -51,6 +52,7 @@ Time-of-day, weekday, and business-hours patterns are not planned unless request
 - [x] **Local browser OAuth sign-in:** Implemented Atlassian 3LO with backend-only in-memory tokens, refresh and session-specific caches. [Setup and scopes](README.md#sign-in-with-atlassian-oauth).
 - [x] **Validate OAuth while the dedicated test site has Premium (until December 2026):** Live browser consent, alert listing (30 alerts synced, none skipped), and sign-out returning to the login page passed on 2026-11-22.
   - Done on 2026-11-25 with `npm run e2e:live:oauth`: all 9 checks passed as the signed-in user on a disposable alert. They covered acknowledge, notes, tags, assign, snooze, attachment upload and download link, a global maintenance window, and reads after the access token expired and was refreshed. The trial ends on 2026-12-19.
+- [x] **Edit the configuration file from the desktop app:** Settings > Configuration file writes the connection, customer and alert settings to `.env` and reconnects without a restart. Write actions, the port and the OAuth callback stay a hand edit. Done in 0.5.0; see the [README](README.md#configuration-file-in-the-desktop-app).
 - [ ] **Windows standalone portable app.** The original browser launcher is replaced in source by an Electron desktop window. Verify startup, shutdown, system-browser OAuth handoff, and upgrading on managed Windows with a build signed by an approved publisher.
   - [Build and signing instructions](README.md#windows-portable-app). Approved signing and managed Windows acceptance remain open.
   - The desktop build implements a one-time handoff from the system browser. Atlassian's documented code exchange requires a client secret. Keep an organization-owned secret on a confidential backend for a distributed app; never embed it in the installer. Only add persistent login if needed, with user-bound Windows credential protection.
