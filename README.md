@@ -103,7 +103,7 @@ Draft a rule under **Workflows**, then configure and enable it in Jira Automatio
 
 Writes are disabled by default. To enable them, set `JIRA_WRITE_ACTIONS` in `.env` to `true` or a comma-separated list such as `acknowledge,unacknowledge,addNote`, then restart. See `.env.example` for action names. Test on a dedicated Jira site first.
 
-Actions include acknowledging, closing, assigning, snoozing, notes, tags and maintenance windows. Bulk actions report per-alert outcomes. Jira permissions and plan restrictions apply; actions use the signed-in OAuth user or the configured API-token account.
+Actions include acknowledging, closing, assigning, snoozing, notes, tags, maintenance windows and your own [notification settings](#alert-notifications). Bulk actions report per-alert outcomes. Jira permissions and plan restrictions apply; actions use the signed-in OAuth user or the configured API-token account.
 
 Open an alert to edit or delete notes and upload attachments up to 10 MiB. Enable `editNote`, `deleteNote`, or `uploadAttachment` as needed. Demo writes only affect memory, and demo uploads retain metadata but not file contents. Reopening closed alerts is not available.
 
@@ -116,7 +116,7 @@ Open an alert to edit or delete notes and upload attachments up to 10 MiB. Enabl
 - **Notification rules,** for each event (new, acknowledged, closed and assigned alert, add note, schedule start and end, incoming call routing): add, rename, switch on or off and delete rules; add or remove notification methods; for new and assigned alerts, wait before notifying; limit a rule to alerts matching a query (for example `priority:P1 AND tags:prod`) or to a daily time window; repeat new-alert notifications until the alert is seen; choose when schedule rules notify.
 - **Removing a time limit:** Jira cannot remove one from a rule, so the app replaces the rule with a copy without it, at the end of its list.
 - **In Jira only:** Do Not Disturb, the order of rules, and weekday time windows (shown and kept, not edited).
-- The settings belong to the signed-in OAuth user, or to the API-token account.
+- The settings belong to the signed-in OAuth user, or to the API-token account. They are your real Jira settings: switching off or deleting a rule stops those notifications in Jira too.
 
 ## Checks and test tools
 
@@ -126,7 +126,7 @@ Open an alert to edit or delete notes and upload attachments up to 10 MiB. Enabl
 | `npm run typecheck` | TypeScript check |
 | `npm run e2e` | Browser tests in demo mode; first install Chromium with `npx playwright install chromium` |
 | `npm run test:coverage` | Generate `coverage/lcov.info` for SonarQube |
-| `npm run e2e:live` | Creates and changes alerts on the configured Jira **test site** with the API token (forces basic sign-in for its own server) |
+| `npm run e2e:live` | Creates and changes alerts, and one switched-off notification rule that it deletes, on the configured Jira **test site** with the API token (forces basic sign-in for its own server) |
 | `npm run e2e:live:login`, then `npm run e2e:live:oauth` | Checks writes as the signed-in OAuth user on your running instance (below) |
 | `npm run jira:test-alerts -- create --yes` | Creates test alerts; `close --yes` closes them |
 | `npm run jira:simulate -- run --yes` | Runs a test-site scenario; `cleanup --yes` closes its alerts and removes its heartbeat |

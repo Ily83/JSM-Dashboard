@@ -13,7 +13,11 @@ git pull
 npm ci
 ```
 
-To change the settings, add `notifications` to `JIRA_WRITE_ACTIONS` and restart. With OAuth, also add `write:ops-config:jira-service-management` and `delete:ops-config:jira-service-management` to your Atlassian app's permissions, then sign in again.
+Desktop app: run `npm run package:windows`, extract the new ZIP to a fresh folder and copy your `.env` and mapping file across.
+
+The page is read-only until you add `notifications` to `JIRA_WRITE_ACTIONS` in `.env` and restart; in the desktop app this is a hand edit, not in Settings. With OAuth, also add `write:ops-config:jira-service-management` and `delete:ops-config:jira-service-management` to your Atlassian app's permissions, then sign in again.
+
+On a production site these are your real Jira settings: switching off or deleting a rule stops those notifications in Jira too.
 
 ### Added
 
