@@ -58,6 +58,17 @@ describe('buildPreferencesFile', () => {
     expect(backup.data[VIEWS_KEY]).toEqual({ saved: [view('a', 'A')], defaultViewId: 'a' });
   });
 
+  it('exports copies, so changing an exported file leaves the live settings alone', () => {
+    const live = view('a', 'A');
+    const single = buildViewFile(live);
+    single.view.name = 'changed';
+    expect(live.name).toBe('A');
+    const saved = [view('b', 'B')];
+    const backup = buildPreferencesFile([], { saved, defaultViewId: null });
+    (backup.data[VIEWS_KEY] as { saved: Array<{ name: string }> }).saved[0].name = 'changed';
+    expect(saved[0].name).toBe('B');
+  });
+
   it('builds a single-view file', () => {
     const exported = buildViewFile(view('a', 'A'));
     expect(exported.format).toBe(VIEW_FORMAT);

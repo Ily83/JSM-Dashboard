@@ -121,13 +121,12 @@ OAuth sessions exist only in the memory of the instance you signed in to, so the
 5. For token refresh, run `npm run e2e:live:oauth -- -g "token refresh"` between one and eight hours after signing in.
 6. Delete the saved sign-in afterwards: `rm e2e/.auth/oauth-session.json`. It is a live session (git-ignored, mode 0600).
 
-### Acceptance checks for the portable app, OAuth and History
+### Acceptance checks for the portable app and History
 
 These checks remain open; use a dedicated test site, not production.
 
 1. **Managed Windows:** Test an IT-approved signed ZIP with normal endpoint policy. Check demo startup, saved views after an upgrade, shutdown and port release, and OAuth handoff to the system browser and back. Do not bypass an endpoint block.
-2. **OAuth:** On a Premium test site, start read-only. Verify alert and attachment reads, token refresh after expiry, and sign-out. Then enable `assign,snooze` with the required scopes and test one disposable alert; restore read-only mode. Never share credentials, cookies or callback URLs.
-3. **High-volume History:** On a dedicated test site, choose a completed UTC range with over 500 alerts and an independently known distinct count, accounting for `JIRA_ALERT_QUERY`. Set `JIRA_AUTH_MODE=basic` and test-site credentials:
+2. **High-volume History:** On a dedicated test site, choose a completed UTC range with over 500 alerts and an independently known distinct count, accounting for `JIRA_ALERT_QUERY`. Set `JIRA_AUTH_MODE=basic` and test-site credentials:
 
    ```bash
    npm run jira:validate-history -- --test-site https://YOUR-TEST-SITE.atlassian.net --from YYYY-MM-DD --to YYYY-MM-DD --expected COUNT
