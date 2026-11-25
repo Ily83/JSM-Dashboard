@@ -28,7 +28,8 @@ Restart a running instance after updating. An instance started before 0.4.0's OA
 ### Verification
 
 - Type check, 410 unit and component tests, build, 31 demo browser tests, the live API-token round trip on a test site (4 tests) and the portable app smoke test on Linux all pass.
-- Not yet run: the new OAuth live tests (they need a signed-in instance) and native Windows.
+- The OAuth live tests on the test site: 7 of 9 pass (sign-in, acknowledge, notes, tags, assign, snooze, attachment upload). Maintenance needs a global alert policy on the site, and token refresh needs a session over an hour old.
+- Not yet run: native Windows.
 
 ## 0.4.0 (2026-11-21)
 

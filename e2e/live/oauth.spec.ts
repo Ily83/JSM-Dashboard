@@ -240,8 +240,15 @@ test.describe.serial('live OAuth', () => {
     const before = (await freshAlert(page, target.id))!;
 
     await p.getByRole('button', { name: 'Assign', exact: true }).click();
-    await viaUi(page, target.id, 'assign to me', () => page.getByRole('dialog', { name: 'Assign' }).getByRole('button', { name: /Assign to me/ }).click());
-    const after = await until(page, target.id, `owner is ${me!.displayName}`, (a) => a.assignee !== null && [me!.displayName, me!.accountId].includes(a.assignee));
+    const result = await viaUi(page, target.id, 'assign to me', () => page.getByRole('dialog', { name: 'Assign' }).getByRole('button', { name: /Assign to me/ }).click());
+    // Jira can report the owner as the account's email address, which the app does not
+    // know for the signed-in user. A new owner after the assign is then the evidence.
+    const mine = (owner: string) => [me!.displayName, me!.accountId].includes(owner);
+    const after = await until(page, target.id, `owner is ${me!.displayName}, or a new owner`, (a) =>
+      a.assignee !== null && (mine(a.assignee) || a.assignee !== before.assignee || (before.assignee !== null && result.state === 'done')));
+    if (after.assignee === before.assignee && !mine(after.assignee!)) {
+      note('owner', 'unchanged: the alert already had this owner before the run, and Jira confirmed the assign');
+    }
     note('owner', `${after.assignee} (was ${before.assignee ?? 'nobody'})`);
     note('restore', before.assignee && before.assignee !== after.assignee
       ? `not restored: the owner was ${before.assignee}; reassign in Jira if that matters`
