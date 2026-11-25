@@ -1,7 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { SETUP_PATH } from '../shared/desktopConfig';
 import { App } from './App';
+import { SetupPage } from './components/SetupPage';
 import { getPreferenceStorage } from './lib/storage';
 import { applyDefaultViewOnStart } from './state/views';
 import './index.css';
@@ -32,7 +34,8 @@ applyDefaultViewOnStart();
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      {/* Desktop app: the configuration page also opens while signed out. */}
+      {globalThis.location.pathname === SETUP_PATH ? <SetupPage /> : <App />}
     </QueryClientProvider>
   </StrictMode>,
 );

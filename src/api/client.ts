@@ -9,6 +9,7 @@ import type {
   Page,
 } from '../../shared/actions';
 import type { AlertDetail, AlertsResponse, HistoryResponse, StatusResponse } from '../../shared/types';
+import { DESKTOP_CONFIG_API, type DesktopConfigResponse, type DesktopConfigSaveRequest, type DesktopConfigSaveResponse } from '../../shared/desktopConfig';
 import { HISTORY_ANALYSIS_RESULT_PAGE_SIZE, type HistoryAnalysisResultPage, type HistoryAnalysisStatus, type HistoryMonth } from '../../shared/historyAnalysis';
 
 /**
@@ -183,4 +184,17 @@ export function fetchSchedules(signal?: AbortSignal): Promise<DirectoryEntry[]> 
 
 export function fetchEscalations(teamId: string, signal?: AbortSignal): Promise<DirectoryEntry[]> {
   return getJson(`/api/directory/teams/${enc(teamId)}/escalations`, signal);
+}
+
+/** Desktop app only: the editable settings of the configuration file. Secrets are never returned. */
+export function fetchDesktopConfig(signal?: AbortSignal): Promise<DesktopConfigResponse> {
+  return getJson(DESKTOP_CONFIG_API, signal);
+}
+
+export function saveDesktopConfig(request: DesktopConfigSaveRequest): Promise<DesktopConfigSaveResponse> {
+  return getJson(DESKTOP_CONFIG_API, undefined, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Alert-Center-Action': '1' },
+    body: JSON.stringify(request),
+  });
 }

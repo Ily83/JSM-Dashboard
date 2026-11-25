@@ -68,6 +68,28 @@ export interface OpsContextRoutes {
   maintenance: MaintenanceService;
 }
 
+/** Security headers for every response; the strict content policy applies to the production build. */
+export function securityHeaders(config: Pick<AppConfig, 'oauth' | 'isProduction' | 'distDir'>) {
+  return helmet({
+    // OAuth logout is a same-origin form POST; retain its Origin even on a localhost HTTP dashboard.
+    ...(config.oauth ? { referrerPolicy: { policy: 'same-origin' as const }, strictTransportSecurity: false } : {}),
+    // The Vite dev server injects inline scripts; the strict policy applies to the production build.
+    contentSecurityPolicy: config.isProduction
+      ? { directives: { defaultSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:'], ...(config.oauth || config.distDir ? { upgradeInsecureRequests: null } : {}) } }
+      : false,
+  });
+}
+
+/** The built frontend. Asset file names contain a content hash; the HTML that points to them must not be cached. */
+export function frontendFiles(dist: string, index: string | false = 'index.html') {
+  return express.static(dist, {
+    index,
+    setHeaders: (res, file) => {
+      res.setHeader('Cache-Control', file.endsWith('.html') ? 'no-cache' : 'public, max-age=31536000, immutable');
+    },
+  });
+}
+
 export function createApp(
   config: AppConfig,
   store: AlertStore,
@@ -78,16 +100,7 @@ export function createApp(
   const app = express();
   const analysis = new HistoryAnalysisService((page) => store.getHistory(page), config.mode === 'demo' ? 0 : 1000);
   app.disable('x-powered-by');
-  app.use(
-    helmet({
-      // OAuth logout is a same-origin form POST; retain its Origin even on a localhost HTTP dashboard.
-      ...(config.oauth ? { referrerPolicy: { policy: 'same-origin' as const }, strictTransportSecurity: false } : {}),
-      // The Vite dev server injects inline scripts; the strict policy applies to the production build.
-      contentSecurityPolicy: config.isProduction
-        ? { directives: { defaultSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:'], ...(config.oauth || config.distDir ? { upgradeInsecureRequests: null } : {}) } }
-        : false,
-    }),
-  );
+  app.use(securityHeaders(config));
   app.use(compression());
 
   // Health checks for a process manager or container platform. They are
@@ -151,6 +164,7 @@ export function createApp(
       },
       extraction: { ...config.extraction, customerMapRules: config.customerMapRules ?? 0 },
       warnings: config.warnings,
+      ...(config.configEditor ? { configEditor: true } : {}),
       meta: store.meta(),
     };
     res.json(body);
@@ -422,15 +436,7 @@ export function createApp(
   // Production: serve the built frontend from the same origin.
   const dist = config.distDir ?? path.resolve('dist');
   if (config.isProduction && existsSync(path.join(dist, 'index.html'))) {
-    app.use(
-      express.static(dist, {
-        index: 'index.html',
-        setHeaders: (res, file) => {
-          // Asset file names contain a content hash; the HTML that points to them must not be cached.
-          res.setHeader('Cache-Control', file.endsWith('.html') ? 'no-cache' : 'public, max-age=31536000, immutable');
-        },
-      }),
-    );
+    app.use(frontendFiles(dist));
   }
 
   app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {

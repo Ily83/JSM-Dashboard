@@ -36,6 +36,8 @@ export interface DesktopAuth {
   isWindow(req: Request): boolean;
   openBrowser(url: string): Promise<void>;
   onSignedIn(): void;
+  /** Path of the window's configuration page, linked from the sign-in page. */
+  settingsPath?: string;
 }
 
 function cookie(req: Request, name: string) {
@@ -85,8 +87,10 @@ export function createOAuthApp(
 
   const loginPage = (res: Response, message: string, retry = true) => {
     const retryLink = retry ? `<a href="${AUTH}/start">Sign in with Atlassian</a>` : '';
+    // Only pages shown in the desktop window offer the retry, so only they link to its settings.
+    const settingsLink = retry && desktop?.settingsPath ? `<p><a href="${desktop.settingsPath}">Connection settings</a></p>` : '';
     return res.type('html').send(
-      `<!doctype html><html lang="en"><meta charset="utf-8"><title>Alert Center sign-in</title><main><h1>Jira Operations – Alert Center</h1><p>${message}</p>${retryLink}</main></html>`,
+      `<!doctype html><html lang="en"><meta charset="utf-8"><title>Alert Center sign-in</title><main><h1>Jira Operations – Alert Center</h1><p>${message}</p>${retryLink}${settingsLink}</main></html>`,
     );
   };
   app.get(`${AUTH}/login`, (_req, res) => loginPage(res, 'Use the Atlassian account for your Jira site.'));
