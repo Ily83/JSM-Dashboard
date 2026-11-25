@@ -96,6 +96,8 @@ const EnvSchema = z.object({
   CUSTOMER_MAP_FILE: text,
 });
 
+type Env = z.infer<typeof EnvSchema>;
+
 export interface JiraConfig {
   siteUrl: string;
   siteHost: string;
@@ -181,17 +183,54 @@ function normaliseSiteUrl(raw: string): { siteUrl: string; siteHost: string } | 
   }
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = localEnv()): AppConfig {
+function parseEnv(env: NodeJS.ProcessEnv): Env {
   const parsed = EnvSchema.safeParse(env);
   if (!parsed.success) {
     const problems = parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`);
     // Only variable names and messages are printed, never values.
     throw new Error(`Invalid configuration:\n${problems.join('\n')}`);
   }
-  const e = parsed.data;
-  const warnings: string[] = [];
+  return parsed.data;
+}
 
-  const demoForced = e.DEMO_MODE !== undefined && /^(1|true|yes|on)$/i.test(e.DEMO_MODE);
+/** OAuth mode: the app credentials and a loopback callback, or an error that says what is wrong. */
+function oauthConfig(e: Env): OAuthConfig {
+  if (!e.JIRA_SITE_URL || !normaliseSiteUrl(e.JIRA_SITE_URL) || !e.JIRA_OAUTH_CLIENT_ID || !e.JIRA_OAUTH_CLIENT_SECRET)
+    throw new Error('OAuth requires JIRA_SITE_URL, JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_CLIENT_SECRET.');
+  if (e.HOST && !['localhost', '127.0.0.1'].includes(e.HOST)) throw new Error('OAuth mode requires a loopback HOST.');
+  const redirectUri = e.JIRA_OAUTH_REDIRECT_URI ?? `http://localhost:${e.PORT}/api/auth/callback`;
+  if (!/^http:\/\/(?:localhost|127\.0\.0\.1):\d{1,5}\/api\/auth\/callback$/.test(redirectUri) || !URL.canParse(redirectUri))
+    throw new Error('JIRA_OAUTH_REDIRECT_URI must be a local HTTP callback with an explicit port and path /api/auth/callback.');
+  return { clientId: e.JIRA_OAUTH_CLIENT_ID, clientSecret: e.JIRA_OAUTH_CLIENT_SECRET, redirectUri };
+}
+
+function jiraConfig(e: Env, site: { siteUrl: string; siteHost: string }, oauth: OAuthConfig | undefined, writeActions: ActionId[]): JiraConfig {
+  return {
+    ...site,
+    cloudId: e.JIRA_CLOUD_ID ?? null,
+    email: oauth ? '' : e.JIRA_EMAIL!,
+    apiToken: oauth ? '' : e.JIRA_API_TOKEN!,
+    alertQuery: e.JIRA_ALERT_QUERY ?? null,
+    openQuery: e.JIRA_OPEN_QUERY ?? 'status: open',
+    closedQuery: e.JIRA_CLOSED_QUERY ?? 'NOT status: open',
+    alertUrlTemplate: e.JIRA_ALERT_URL_TEMPLATE ?? '{siteUrl}/jira/ops/alerts/{id}',
+    maxOpenAlerts: e.JIRA_MAX_ALERTS,
+    maxClosedAlerts: e.JIRA_MAX_CLOSED_ALERTS,
+    closedLookbackHours: e.JIRA_CLOSED_LOOKBACK_HOURS,
+    fullSyncMinutes: e.JIRA_FULL_SYNC_MINUTES,
+    requestTimeoutMs: e.JIRA_REQUEST_TIMEOUT_MS,
+    enrichDetails: e.JIRA_ENRICH_DETAILS ?? 'auto',
+    enrichMaxPerSync: e.JIRA_ENRICH_MAX_PER_SYNC,
+    writeActions,
+  };
+}
+
+/**
+ * Live mode settings, or null for demo mode. Without OAuth, live mode needs
+ * the site, email and API token; a partial set or an invalid site URL adds a
+ * warning.
+ */
+function liveJira(e: Env, oauth: OAuthConfig | undefined, writeActions: ActionId[], warnings: string[]): JiraConfig | null {
   const provided = {
     JIRA_SITE_URL: e.JIRA_SITE_URL,
     JIRA_EMAIL: e.JIRA_EMAIL,
@@ -200,6 +239,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = localEnv()): AppConfig {
   const missing = Object.entries(provided)
     .filter(([, v]) => v === undefined)
     .map(([k]) => k);
+  if (oauth || missing.length === 0) {
+    const site = normaliseSiteUrl(e.JIRA_SITE_URL!);
+    if (site) return jiraConfig(e, site, oauth, writeActions);
+    warnings.push('JIRA_SITE_URL is not a valid https URL. Running in demo mode.');
+  } else if (missing.length < 3) {
+    warnings.push(
+      `Jira configuration is incomplete (missing ${missing.join(', ')}). Running in demo mode.`,
+    );
+  }
+  return null;
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = localEnv()): AppConfig {
+  const e = parseEnv(env);
+  const warnings: string[] = [];
+
+  const demoForced = e.DEMO_MODE !== undefined && /^(1|true|yes|on)$/i.test(e.DEMO_MODE);
 
   const writes = parseWriteActions(e.JIRA_WRITE_ACTIONS);
   if (writes.unknown.length > 0) {
@@ -207,46 +263,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = localEnv()): AppConfig {
     warnings.push(`JIRA_WRITE_ACTIONS contains unknown actions (${writes.unknown.join(', ')}). They are ignored.`);
   }
 
-  let jira: JiraConfig | null = null;
-  let oauth: OAuthConfig | undefined;
-  if (!demoForced && e.JIRA_AUTH_MODE === 'oauth') {
-    if (!e.JIRA_SITE_URL || !normaliseSiteUrl(e.JIRA_SITE_URL) || !e.JIRA_OAUTH_CLIENT_ID || !e.JIRA_OAUTH_CLIENT_SECRET)
-      throw new Error('OAuth requires JIRA_SITE_URL, JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_CLIENT_SECRET.');
-    if (e.HOST && !['localhost', '127.0.0.1'].includes(e.HOST)) throw new Error('OAuth mode requires a loopback HOST.');
-    const redirectUri = e.JIRA_OAUTH_REDIRECT_URI ?? `http://localhost:${e.PORT}/api/auth/callback`;
-    if (!/^http:\/\/(?:localhost|127\.0\.0\.1):\d{1,5}\/api\/auth\/callback$/.test(redirectUri) || !URL.canParse(redirectUri))
-      throw new Error('JIRA_OAUTH_REDIRECT_URI must be a local HTTP callback with an explicit port and path /api/auth/callback.');
-    oauth = { clientId: e.JIRA_OAUTH_CLIENT_ID, clientSecret: e.JIRA_OAUTH_CLIENT_SECRET, redirectUri };
-  }
-  if (!demoForced && (oauth || missing.length === 0)) {
-    const site = normaliseSiteUrl(e.JIRA_SITE_URL!);
-    if (site) {
-      jira = {
-        ...site,
-        cloudId: e.JIRA_CLOUD_ID ?? null,
-        email: oauth ? '' : e.JIRA_EMAIL!,
-        apiToken: oauth ? '' : e.JIRA_API_TOKEN!,
-        alertQuery: e.JIRA_ALERT_QUERY ?? null,
-        openQuery: e.JIRA_OPEN_QUERY ?? 'status: open',
-        closedQuery: e.JIRA_CLOSED_QUERY ?? 'NOT status: open',
-        alertUrlTemplate: e.JIRA_ALERT_URL_TEMPLATE ?? '{siteUrl}/jira/ops/alerts/{id}',
-        maxOpenAlerts: e.JIRA_MAX_ALERTS,
-        maxClosedAlerts: e.JIRA_MAX_CLOSED_ALERTS,
-        closedLookbackHours: e.JIRA_CLOSED_LOOKBACK_HOURS,
-        fullSyncMinutes: e.JIRA_FULL_SYNC_MINUTES,
-        requestTimeoutMs: e.JIRA_REQUEST_TIMEOUT_MS,
-        enrichDetails: e.JIRA_ENRICH_DETAILS ?? 'auto',
-        enrichMaxPerSync: e.JIRA_ENRICH_MAX_PER_SYNC,
-        writeActions: writes.actions,
-      };
-    } else {
-      warnings.push('JIRA_SITE_URL is not a valid https URL. Running in demo mode.');
-    }
-  } else if (!demoForced && missing.length < 3) {
-    warnings.push(
-      `Jira configuration is incomplete (missing ${missing.join(', ')}). Running in demo mode.`,
-    );
-  }
+  const oauth = !demoForced && e.JIRA_AUTH_MODE === 'oauth' ? oauthConfig(e) : undefined;
+  const jira = demoForced ? null : liveJira(e, oauth, writes.actions, warnings);
 
   return {
     oauth,

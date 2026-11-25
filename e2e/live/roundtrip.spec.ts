@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { loadConfig } from '../../server/config';
 import { JiraClient } from '../../server/jira/client';
 import { alarms, expect, panel, recordAlarms, test } from '../fixtures';
+import { localEnv } from './oauthSession';
 
 /**
  * Round trip with a real Jira Service Management site (a TEST site):
@@ -13,7 +14,9 @@ import { alarms, expect, panel, recordAlarms, test } from '../fixtures';
 const TAG = 'alert-center-e2e';
 const run = Date.now().toString(36);
 const summary = `E2E ${run}: storage latency above 200 ms`;
-const jira = loadConfig().jira;
+// API-token mode, like the backend playwright.config.ts starts for this project,
+// even when .env selects OAuth for the operator's own instance.
+const jira = loadConfig({ ...localEnv(), JIRA_AUTH_MODE: 'basic' }).jira;
 const client = jira ? new JiraClient(jira, 2) : null;
 
 /** Asks the backend for fresh data until the check passes (the backend caches for 5 s). */
@@ -31,7 +34,13 @@ async function refreshUntil(page: Page, check: () => Promise<boolean>, timeout =
 }
 
 test.describe.serial('live round trip', () => {
-  test.skip(!client, 'needs JIRA_SITE_URL, JIRA_EMAIL and JIRA_API_TOKEN in .env');
+  test.beforeAll(() => {
+    if (client) return;
+    const reason = 'needs JIRA_SITE_URL, JIRA_EMAIL and JIRA_API_TOKEN in .env (this round trip uses the API token; for OAuth run npm run e2e:live:oauth)';
+    // The list reporter hides skip reasons.
+    console.log(`live skipped: ${reason}`);
+    test.skip(true, reason);
+  });
   let alertId = '';
 
   test.afterAll(async () => {

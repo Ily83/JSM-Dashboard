@@ -40,6 +40,32 @@ export async function apiAction(page: Page, alertId: string, action: Record<stri
   );
 }
 
+/**
+ * Sends one guarded write (POST with JSON body and the action header) from the
+ * page, as the UI does, and returns the status with the parsed answer.
+ * From the page, so the browser adds the Origin an OAuth backend requires.
+ */
+export async function apiWrite<T = unknown>(page: Page, path: string, body: unknown): Promise<{ status: number; body: T }> {
+  return page.evaluate(
+    async ({ url, payload }) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-alert-center-action': '1' },
+        body: JSON.stringify(payload),
+      });
+      const text = await response.text();
+      let parsed: unknown = null;
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        parsed = { error: text.slice(0, 200) };
+      }
+      return { status: response.status, body: parsed as T };
+    },
+    { url: path, payload: body },
+  );
+}
+
 export interface ListedAlert {
   id: string;
   tinyId: string | null;

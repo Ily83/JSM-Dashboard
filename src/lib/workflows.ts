@@ -76,10 +76,12 @@ export function jiraChecklist(draft: WorkflowDraft): string {
   if (draft.status) steps.push(equal('{{alert.status}}', JIRA_STATUS[draft.status]));
   if (draft.source.trim()) steps.push(equal('{{alert.source}}', draft.source.trim()));
   if (draft.message.trim()) steps.push(`Add a smart values condition: {{alert.message}} contains ${JSON.stringify(draft.message.trim())}.`);
-  steps.push(`Add “${WORKFLOW_ACTIONS[draft.action]}”. ${draft.action === 'log'
-    ? 'Start with “Alert {{alert.tinyId}} matched” as the log message.'
-    : 'Choose an approved connection or recipients in Jira. Start with “Alert {{alert.tinyId}} matched”; only include alert content if that destination is authorized to receive it.'}`);
-  steps.push('Test on a dedicated Jira site, then have an authorized operator enable the flow and review the Jira automation audit log.');
+  steps.push(
+    `Add “${WORKFLOW_ACTIONS[draft.action]}”. ${draft.action === 'log'
+      ? 'Start with “Alert {{alert.tinyId}} matched” as the log message.'
+      : 'Choose an approved connection or recipients in Jira. Start with “Alert {{alert.tinyId}} matched”; only include alert content if that destination is authorized to receive it.'}`,
+    'Test on a dedicated Jira site, then have an authorized operator enable the flow and review the Jira automation audit log.',
+  );
   return steps.map((step, i) => `${i + 1}. ${step}`).join('\n');
 }
 

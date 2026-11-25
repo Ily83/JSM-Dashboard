@@ -26,6 +26,21 @@ export class ApiRequestError extends Error {
   }
 }
 
+/** The error message of a failed response: the backend's own, else one for its status. */
+async function failureMessage(response: Response): Promise<string> {
+  let message = `The backend answered with status ${response.status}.`;
+  try {
+    const body: unknown = await response.json();
+    if (typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string') {
+      message = body.error;
+    }
+  } catch {
+    // Not JSON (for example the dev proxy while the backend restarts).
+    if (response.status >= 500) message = 'The Alert Center backend is not reachable. Is the server running?';
+  }
+  return message;
+}
+
 export async function getJson<T>(url: string, signal?: AbortSignal, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
@@ -36,19 +51,9 @@ export async function getJson<T>(url: string, signal?: AbortSignal, init: Reques
   }
   if (!response.ok) {
     if (response.status === 401 && response.headers.get('X-Alert-Center-Login') === '1') {
-      window.location.replace('/api/auth/login');
+      globalThis.location.replace('/api/auth/login');
     }
-    let message = `The backend answered with status ${response.status}.`;
-    try {
-      const body: unknown = await response.json();
-      if (typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string') {
-        message = body.error;
-      }
-    } catch {
-      // Not JSON (for example the dev proxy while the backend restarts).
-      if (response.status >= 500) message = 'The Alert Center backend is not reachable. Is the server running?';
-    }
-    throw new ApiRequestError(message, response.status);
+    throw new ApiRequestError(await failureMessage(response), response.status);
   }
   return (await response.json()) as T;
 }
@@ -99,11 +104,11 @@ export async function fetchHistoryAnalysisResults(id: string, signal?: AbortSign
     do {
       const params = new URLSearchParams({ id, month: String(month), offset: String(offset) });
       result = await getJson<HistoryAnalysisResultPage>(`/api/history-analysis/results?${params}`, signal);
-      if (!combined) combined = result.month;
-      else combined.alerts.push(...result.month.alerts);
+      if (combined) combined.alerts.push(...result.month.alerts);
+      else combined = result.month;
       offset += HISTORY_ANALYSIS_RESULT_PAGE_SIZE;
     } while (result.hasNextPage);
-    months.push(combined!);
+    months.push(combined);
     if (!result.hasNextMonth) return months;
   }
 }

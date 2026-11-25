@@ -74,7 +74,7 @@ function NoteRow({ note, busy, canEdit, canDelete, run }: Readonly<NoteControls 
       </div>
     </form>}
     {mode === 'delete' && <div className="mt-1 flex flex-wrap items-center gap-1 text-xs">
-      Delete this note permanently?
+      {'Delete this note permanently?'}
       <button className={`${smallButton} text-crit`} type="button" disabled={busy} onClick={() => submit({ action: 'deleteNote', noteId: note.id })}>Confirm delete note</button>
       <button className={smallButton} type="button" disabled={busy} onClick={() => setMode(null)}>Cancel</button>
     </div>}
@@ -229,7 +229,8 @@ function AttachmentUpload({ alertId }: Readonly<{ alertId: string }>) {
     e.preventDefault();
     if (file && !invalid && !upload.isPending) upload.mutate(file);
   }}>
-    <label className="grid gap-1">File to attach (up to 10 MiB)
+    <label className="grid gap-1">
+      {'File to attach (up to 10 MiB)'}
       <input type="file" key={inputKey} disabled={upload.isPending} className="w-full" onChange={e => { setFile(e.target.files?.[0] ?? null); upload.reset(); }} />
     </label>
     <button className={`${smallButton} justify-self-start`} disabled={!file || Boolean(invalid) || upload.isPending} type="submit">{upload.isPending ? 'Uploading…' : 'Upload attachment'}</button>

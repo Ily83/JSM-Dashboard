@@ -15,5 +15,20 @@ export default defineConfig({
       '/api': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: false },
     },
   },
-  build: { outDir: 'dist', sourcemap: false },
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+    rolldownOptions: {
+      output: {
+        // Libraries in their own chunks: they change less often than the app,
+        // so a browser keeps them cached across releases.
+        codeSplitting: {
+          groups: [
+            { name: 'react', test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 2 },
+            { name: 'tanstack', test: /[\\/]node_modules[\\/]@tanstack[\\/]/, priority: 1 },
+          ],
+        },
+      },
+    },
+  },
 });

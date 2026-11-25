@@ -33,7 +33,7 @@ async function start() {
     openBrowser: url => shell.openExternal(url),
     onSignedIn: () => {
       if (win && !win.isDestroyed()) {
-        void win.loadURL(origin).catch(() => {});
+        win.loadURL(origin).catch(() => {});
         if (win.isMinimized()) win.restore();
         win.focus();
       }
@@ -70,7 +70,7 @@ async function start() {
   const external = raw => {
     try {
       const url = new URL(raw);
-      if (url.protocol === 'https:' && !url.username && !url.password) void shell.openExternal(url.href).catch(() => {});
+      if (url.protocol === 'https:' && !url.username && !url.password) shell.openExternal(url.href).catch(() => {});
     } catch { /* no external navigation */ }
   };
   win.webContents.setWindowOpenHandler(({ url }) => {

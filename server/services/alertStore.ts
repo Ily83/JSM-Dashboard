@@ -144,12 +144,7 @@ export class AlertStore {
     this.lastAttemptAt = started;
     try {
       const snapshot = await this.source.sync(this.snapshot);
-      // The list can lag behind the post-action detail, especially during an overlapping sync.
-      for (const [id, detail] of this.actionUpdates) {
-        if (!detail) snapshot.alerts.delete(id);
-        else if ((snapshot.alerts.get(id)?.updatedAt ?? -Infinity) <= detail.updatedAt) snapshot.alerts.set(id, detail);
-      }
-      this.actionUpdates.clear();
+      this.applyActionUpdates(snapshot);
       this.snapshot = snapshot;
       this.rebuildList();
       this.lastSyncAt = Date.now();
@@ -158,24 +153,38 @@ export class AlertStore {
       this.retryAt = null;
       this.retryIsRateLimit = false;
     } catch (error) {
-      this.failures += 1;
-      this.lastError = publicMessage(error);
-      const rateLimited = error instanceof JiraApiError && error.kind === 'rate_limit';
-      const backoff = Math.min(MAX_BACKOFF_MS, this.ttlMs * 2 ** Math.min(this.failures - 1, 6));
-      const wait = rateLimited ? Math.max(error.retryAfterMs ?? 0, backoff) : backoff;
-      this.retryAt = Date.now() + wait;
-      this.retryIsRateLimit = rateLimited;
-      log.warn('alert sync failed, serving cached data', {
-        kind: error instanceof JiraApiError ? error.kind : 'internal',
-        status: error instanceof JiraApiError ? (error.status ?? 'none') : 'none',
-        failures: this.failures,
-        retryInSeconds: Math.round(wait / 1000),
-      });
-      if (!(error instanceof JiraApiError)) {
-        log.error('unexpected sync error', { name: error instanceof Error ? error.name : 'unknown' });
-      }
+      this.recordFailure(error);
     } finally {
       this.lastDurationMs = Date.now() - started;
+    }
+  }
+
+  /** The list can lag behind the post-action detail, especially during an overlapping sync. */
+  private applyActionUpdates(snapshot: SourceSnapshot): void {
+    for (const [id, detail] of this.actionUpdates) {
+      if (!detail) snapshot.alerts.delete(id);
+      else if ((snapshot.alerts.get(id)?.updatedAt ?? -Infinity) <= detail.updatedAt) snapshot.alerts.set(id, detail);
+    }
+    this.actionUpdates.clear();
+  }
+
+  /** A failed sync: back off (at least as long as a rate limit asks), log it, keep serving the cached data. */
+  private recordFailure(error: unknown): void {
+    this.failures += 1;
+    this.lastError = publicMessage(error);
+    const rateLimited = error instanceof JiraApiError && error.kind === 'rate_limit';
+    const backoff = Math.min(MAX_BACKOFF_MS, this.ttlMs * 2 ** Math.min(this.failures - 1, 6));
+    const wait = rateLimited ? Math.max(error.retryAfterMs ?? 0, backoff) : backoff;
+    this.retryAt = Date.now() + wait;
+    this.retryIsRateLimit = rateLimited;
+    log.warn('alert sync failed, serving cached data', {
+      kind: error instanceof JiraApiError ? error.kind : 'internal',
+      status: error instanceof JiraApiError ? (error.status ?? 'none') : 'none',
+      failures: this.failures,
+      retryInSeconds: Math.round(wait / 1000),
+    });
+    if (!(error instanceof JiraApiError)) {
+      log.error('unexpected sync error', { name: error instanceof Error ? error.name : 'unknown' });
     }
   }
 

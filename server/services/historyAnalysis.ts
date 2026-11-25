@@ -16,6 +16,30 @@ function monthCount(from: number, to: number): number {
   return (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + end.getUTCMonth() - start.getUTCMonth() + 1;
 }
 
+/**
+ * Adds the alerts of one page that belong to the window [from, until) to
+ * `windowAlerts`. True when the page had others: outside the window, or
+ * already read from an earlier page (the result is then partial).
+ */
+export function addWindowAlerts(alerts: readonly Alert[], from: number, until: number, windowAlerts: Map<string, Alert>): boolean {
+  let partial = false;
+  for (const alert of alerts) {
+    if (alert.createdAt < from || alert.createdAt >= until || windowAlerts.has(alert.id)) partial = true;
+    else windowAlerts.set(alert.id, alert);
+  }
+  return partial;
+}
+
+/** Adds a window's alerts to those of the month. True when one was already there (the result is then partial). */
+export function addSeenAlerts(windowAlerts: ReadonlyMap<string, Alert>, seen: Map<string, Alert>): boolean {
+  let partial = false;
+  for (const [id, alert] of windowAlerts) {
+    if (seen.has(id)) partial = true;
+    else seen.set(id, alert);
+  }
+  return partial;
+}
+
 /** One server-local analysis, retained in memory until another is started or the server restarts. */
 export class HistoryAnalysisService {
   private job: Job | null = null;
@@ -85,7 +109,8 @@ export class HistoryAnalysisService {
   private async scanWindow(job: Job, from: number, until: number, seen: Map<string, Alert>): Promise<boolean> {
     const windowAlerts = new Map<string, Alert>();
     let partial = false;
-    for (let offset = 0; this.active(job); offset += HISTORY_PAGE_SIZE) {
+    let offset = 0;
+    while (this.active(job)) {
       const page = await this.page(job, from, until, offset);
       if (!page) return true;
       if (page.truncated && until - from > 1) {
@@ -95,16 +120,11 @@ export class HistoryAnalysisService {
         return first || second;
       }
       partial ||= page.truncated || page.skipped > 0;
-      for (const alert of page.alerts) {
-        if (alert.createdAt < from || alert.createdAt >= until || windowAlerts.has(alert.id)) partial = true;
-        else windowAlerts.set(alert.id, alert);
-      }
+      if (addWindowAlerts(page.alerts, from, until, windowAlerts)) partial = true;
       if (!page.hasNext) break;
+      offset += HISTORY_PAGE_SIZE;
     }
-    for (const [id, alert] of windowAlerts) {
-      if (seen.has(id)) partial = true;
-      else seen.set(id, alert);
-    }
+    if (addSeenAlerts(windowAlerts, seen)) partial = true;
     return partial;
   }
 

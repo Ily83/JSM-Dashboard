@@ -16,32 +16,39 @@ function WorkflowEditor({ draft, onChange }: Readonly<{ draft: WorkflowDraft; on
   const teams = useTeams();
   const triggers = (Object.keys(TRIGGERS) as WorkflowDraft['trigger'][]).map(id => <option key={id} value={id}>{TRIGGERS[id]}</option>);
   return <div className="grid gap-3">
-    <label className="grid gap-1 text-xs">Workflow name
+    <label className="grid gap-1 text-xs">
+      {'Workflow name'}
       <input className={field} required maxLength={80} value={draft.name} onChange={e => onChange({ name: e.target.value })} />
     </label>
-    <label className="grid gap-1 text-xs">Trigger
+    <label className="grid gap-1 text-xs">
+      {'Trigger'}
       <select className={field} value={draft.trigger} onChange={e => onChange({ trigger: e.target.value as WorkflowDraft['trigger'] })}>{triggers}</select>
     </label>
     <fieldset className="grid grid-cols-1 gap-2 rounded-md border border-line px-2 pb-2 sm:grid-cols-2">
       <legend className="px-1 text-xs font-semibold">Conditions · match all</legend>
-      <label className="grid gap-1 text-xs">Priority
+      <label className="grid gap-1 text-xs">
+        {'Priority'}
         <select className={field} value={draft.priority} onChange={e => onChange({ priority: e.target.value as WorkflowDraft['priority'] })}>
           <option value="">Any priority</option>{PRIORITIES.map(p => <option key={p}>{p}</option>)}
         </select>
       </label>
-      <label className="grid gap-1 text-xs">Status
+      <label className="grid gap-1 text-xs">
+        {'Status'}
         <select className={field} value={draft.status} onChange={e => onChange({ status: e.target.value as WorkflowDraft['status'] })}>
           <option value="">Any status</option>{STATUSES.map(s => <option key={s} value={s}>{WORKFLOW_STATUSES[s]}</option>)}
         </select>
       </label>
-      <label className="grid gap-1 text-xs">Jira source (exact)
+      <label className="grid gap-1 text-xs">
+        {'Jira source (exact)'}
         <input className={field} maxLength={120} value={draft.source} onChange={e => onChange({ source: e.target.value })} placeholder="Any source" />
       </label>
-      <label className="grid gap-1 text-xs">Message contains (case-sensitive)
+      <label className="grid gap-1 text-xs">
+        {'Message contains (case-sensitive)'}
         <input className={field} maxLength={200} value={draft.message} onChange={e => onChange({ message: e.target.value })} />
       </label>
     </fieldset>
-    <label className="grid gap-1 text-xs">Team scope
+    <label className="grid gap-1 text-xs">
+      {'Team scope'}
       <select className={field} value={draft.teamId} onChange={e => {
         const team = teams.data?.find(t => t.id === e.target.value);
         onChange({ teamId: e.target.value, teamName: team?.name ?? '' });
@@ -52,7 +59,8 @@ function WorkflowEditor({ draft, onChange }: Readonly<{ draft: WorkflowDraft; on
       </select>
       {teams.isError && <span className="text-warn">Could not load Jira teams.</span>}
     </label>
-    <label className="grid gap-1 text-xs">Action in Jira
+    <label className="grid gap-1 text-xs">
+      {'Action in Jira'}
       <select className={field} value={draft.action} onChange={e => onChange({ action: e.target.value as WorkflowDraft['action'] })}>
         {(Object.keys(WORKFLOW_ACTIONS) as WorkflowDraft['action'][]).map(id => <option key={id} value={id}>{WORKFLOW_ACTIONS[id]}</option>)}
       </select>
@@ -103,7 +111,8 @@ export function WorkflowsView({ alerts, site, ready, limited }: Readonly<{
       <section className={card} aria-labelledby="workflow-draft">
         <h2 id="workflow-draft" className="text-sm font-semibold">Workflow draft</h2>
         <div className="flex flex-wrap items-end gap-2">
-          <label className="grid min-w-40 flex-1 gap-1 text-xs">Saved drafts
+          <label className="grid min-w-40 flex-1 gap-1 text-xs">
+            {'Saved drafts'}
             <select className={field} value={saved?.id ?? ''} onChange={e => show(drafts.find(d => d.id === e.target.value) ?? newWorkflow(randomId('workflow')))}>
               <option value="">Unsaved draft</option>
               {drafts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}

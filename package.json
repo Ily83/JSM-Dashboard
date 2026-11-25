@@ -1,6 +1,6 @@
 {
   "name": "jira-operations-alert-center",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Read-only alert console for Jira Service Management Cloud Operations",
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
@@ -17,6 +17,8 @@
     "jira:simulate": "tsx scripts/jira-simulate.ts",
     "e2e": "npm run build && playwright test --project=demo",
     "e2e:live": "npm run build && playwright test --project=live",
+    "e2e:live:login": "tsx scripts/e2e-live-login.ts",
+    "e2e:live:oauth": "playwright test --project=live-oauth",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
@@ -34,6 +36,9 @@
   "devDependencies": {
     "@playwright/test": "1.64.1",
     "@tailwindcss/vite": "^4.3.5",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.8",
     "@types/compression": "^1.8.1",
     "@types/express": "^5.0.6",
     "@types/node": "^22.20.5",
@@ -44,6 +49,7 @@
     "adm-zip": "0.6.1",
     "concurrently": "^10.0.7",
     "esbuild": "0.28.2",
+    "jsdom": "30.1.3",
     "tailwindcss": "^4.3.5",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

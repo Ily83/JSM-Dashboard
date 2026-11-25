@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
 import { Layers, Rows2, Rows3, Rows4, TriangleAlert } from 'lucide-react';
 import type { Alert, SyncMeta } from '../shared/types';
@@ -12,9 +12,6 @@ import { Dashboard } from './components/dashboard/Dashboard';
 import type { WidgetActions } from './components/dashboard/widgets';
 import { DetailPanel } from './components/DetailPanel';
 import { FilterBar } from './components/filters/FilterBar';
-import { HistoryView } from './components/HistoryView';
-import { WorkflowsView } from './components/WorkflowsView';
-import { SettingsView } from './components/SettingsView';
 import { Sidebar } from './components/Sidebar';
 import { AlertTable } from './components/table/AlertTable';
 import type { CellOptions } from './components/table/columns';
@@ -37,6 +34,18 @@ import { useStore } from './lib/store';
 import { dashboardStore, setDashboardCollapsed } from './state/dashboard';
 import { DENSITIES, patchPrefs, prefsStore } from './state/prefs';
 import { clearAllFilters, openSection, patchCurrentView, viewsStore, type ViewsData, type ViewState } from './state/views';
+
+// Pages other than the alerts page load on first visit, keeping the initial bundle small.
+const HistoryView = lazy(() => import('./components/HistoryView').then((m) => ({ default: m.HistoryView })));
+const WorkflowsView = lazy(() => import('./components/WorkflowsView').then((m) => ({ default: m.WorkflowsView })));
+const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
+const PAGE_FALLBACK = (
+  <div className="grid min-h-0 flex-1 content-start gap-2 p-4" aria-busy="true">
+    <div className="skeleton h-5 w-1/3" />
+    <div className="skeleton h-5 w-2/3" />
+    <div className="skeleton h-5 w-1/2" />
+  </div>
+);
 
 const NO_ALERTS: Alert[] = [];
 const DENSITY_ICON = { compact: Rows4, comfortable: Rows3, spacious: Rows2 } as const;
@@ -275,16 +284,18 @@ export function App() {
           </output>
         )}
 
-        {route.page === 'settings' && (
-          <SettingsView
-            status={status.data}
-            assignees={facets.assignee.map((o) => o.value).filter(Boolean)}
-            customers={scopeOptions.filter((o) => o.total > 0).map((o) => o.name)}
-          />
-        )}
-        {onHistory && <HistoryView />}
-        {route.page === 'workflows' && <WorkflowsView alerts={loadedAlerts} site={status.data?.site} ready={alertsQuery.data !== undefined}
-          limited={Boolean(meta?.truncated || meta?.stale || meta?.skipped)} />}
+        <Suspense fallback={PAGE_FALLBACK}>
+          {route.page === 'settings' && (
+            <SettingsView
+              status={status.data}
+              assignees={facets.assignee.map((o) => o.value).filter(Boolean)}
+              customers={scopeOptions.filter((o) => o.total > 0).map((o) => o.name)}
+            />
+          )}
+          {onHistory && <HistoryView />}
+          {route.page === 'workflows' && <WorkflowsView alerts={loadedAlerts} site={status.data?.site} ready={alertsQuery.data !== undefined}
+            limited={Boolean(meta?.truncated || meta?.stale || meta?.skipped)} />}
+        </Suspense>
         {route.page === 'alerts' && (
           <div className="relative flex min-h-0 flex-1">
             <main className="flex min-w-0 flex-1 flex-col">

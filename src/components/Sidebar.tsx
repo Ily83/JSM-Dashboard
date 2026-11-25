@@ -36,12 +36,12 @@ const item = (active: boolean, collapsed: boolean) =>
 const NARROW_SCREEN = '(width < 48rem)';
 
 function subscribeNarrowScreen(onChange: () => void): () => void {
-  const media = window.matchMedia(NARROW_SCREEN);
+  const media = globalThis.matchMedia(NARROW_SCREEN);
   media.addEventListener('change', onChange);
   return () => media.removeEventListener('change', onChange);
 }
 
-const isNarrowScreen = () => window.matchMedia(NARROW_SCREEN).matches;
+const isNarrowScreen = () => globalThis.matchMedia(NARROW_SCREEN).matches;
 
 export const Sidebar = memo(function Sidebar({ route, counts, countsKnown, collapsed: collapsedPreference, onToggle, views, activeViewId, defaultViewId }: SidebarProps) {
   // Narrow screens get the icon rail whatever the preference, which still applies on wider ones.
@@ -69,13 +69,14 @@ export const Sidebar = memo(function Sidebar({ route, counts, countsKnown, colla
             const Icon = ICONS[id];
             // A saved view is highlighted instead of its section.
             const active = onAlerts && route.section === id && activeViewId === null;
+            const countTip = showCounts ? ` (${counts[id]})` : '';
             return (
               <li key={id}>
                 <a
                   href={`#/${id}`}
                   aria-current={active ? 'page' : undefined}
                   className={item(active, collapsed)}
-                  data-tip={collapsed ? `${SECTIONS[id].label}${showCounts ? ` (${counts[id]})` : ''}` : undefined}
+                  data-tip={collapsed ? `${SECTIONS[id].label}${countTip}` : undefined}
                   data-tip-always=""
                   onClick={(event) => {
                     event.preventDefault();

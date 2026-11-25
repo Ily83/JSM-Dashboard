@@ -10,3 +10,4 @@ test-results/
 playwright-report/
 coverage/
 .scannerwork/
+e2e/.auth/

@@ -2,6 +2,35 @@
 
 Newest release first. Each release lists what changed, how to install or update, and what is known not to work yet.
 
+## 0.4.1 (2026-11-25)
+
+Quality pass on 0.4.0: SonarQube's quality gate passes again, every pull request is checked automatically, and the writes made as the signed-in OAuth user can be tested live.
+
+### Update
+
+```bash
+git pull
+npm ci
+```
+
+Restart a running instance after updating. An instance started before 0.4.0's OAuth fix requests too few permissions, so removing tags, deleting notes and maintenance windows are refused.
+
+### Changed
+
+- **Faster first load:** History, Workflows and Settings load only when opened. The first load of the alerts page is 8% smaller. A tab left open while the app is rebuilt reloads once instead of going blank.
+- **Checks on every pull request (GitHub Actions):** type check, unit and component tests with coverage, the demo browser tests, and the Linux smoke test of the portable app. A SonarQube job runs on `main` once a SonarQube server that GitHub can reach is configured (`SONAR_HOST_URL` variable, `SONAR_TOKEN` secret).
+- **Live tests with OAuth:** `npm run e2e:live:login`, then `npm run e2e:live:oauth`, against your running instance and one disposable alert tagged `alert-center-oauth-e2e`. See [Live tests with OAuth](README.md#live-tests-with-oauth). `npm run e2e:live` still runs the API-token round trip and now signs in with the token even when `.env` selects OAuth.
+
+### Code quality
+
+- SonarQube: both bugs (neither visible to users) and 55 code smells fixed, mostly by splitting complex functions into named helpers; 21 deliberate patterns accepted with reasons. 410 tests, including 146 new component tests; line coverage 69% (was 44%).
+
+### Verification
+
+- Type check, 410 unit and component tests, build, 31 demo browser tests, the live API-token round trip on a test site (4 tests) and the portable app smoke test on Linux all pass.
+- The OAuth live tests on the test site: all 9 pass (sign-in, acknowledge, notes, tags, assign, snooze, attachment upload, a global maintenance window, and reads after the access token expired and was refreshed).
+- Not yet run: native Windows.
+
 ## 0.4.0 (2026-11-21)
 
 - **Windows x64 portable app:** Extract the full ZIP and double-click `Alert Center.exe`. No installation or npm required. A SHA-256 checksum accompanies the download.
