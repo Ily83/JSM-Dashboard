@@ -101,7 +101,10 @@ clearTimeout(deadline);
 const status = analysis.status()!;
 if (status.state === 'completed') {
   const actual = analysis.results(job.id)!.reduce((count, month) => count + month.alerts.length, 0);
-  report(status.partial ? 'Partial result' : actual !== expected ? 'Count mismatch' : 'Passed', actual);
+  let outcome = 'Passed';
+  if (status.partial) outcome = 'Partial result';
+  else if (actual !== expected) outcome = 'Count mismatch';
+  report(outcome, actual);
 } else if (status.state !== 'cancelled') {
   report(budgetExceeded ? 'Request budget exceeded' : `Scan failed: ${status.message ?? 'unknown error'}`, null);
 }

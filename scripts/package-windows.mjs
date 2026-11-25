@@ -34,8 +34,8 @@ try {
   new AdmZip(data).extractAllTo(staging, true, true);
   await rm(path.join(staging, 'resources', 'default_app.asar'), { force: true });
   const executable = path.join(staging, linuxSmoke ? 'electron' : 'Alert Center.exe');
-  if (!linuxSmoke) await rename(path.join(staging, 'electron.exe'), executable);
-  else await chmod(executable, 0o755);
+  if (linuxSmoke) await chmod(executable, 0o755);
+  else await rename(path.join(staging, 'electron.exe'), executable);
 
   const appDir = path.join(staging, 'resources', 'app');
   await mkdir(appDir, { recursive: true });

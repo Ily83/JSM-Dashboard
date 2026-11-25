@@ -270,6 +270,15 @@ function customersView({ rankings, settings, picked, choose }: BreakdownInput): 
   };
 }
 
+type HistoryDay = ReturnType<typeof dailyHistory>['days'][number];
+
+/** The alerts behind one count of the daily breakdown: created, closed, or created with one value of `by`. */
+function dayAlerts(day: HistoryDay, key: string, by: NonNullable<AnalysisSettings['dayBy']>): Alert[] {
+  if (key === 'created') return day.created;
+  if (key === 'closed-at') return day.closed;
+  return day.created.filter(a => a[by] === key);
+}
+
 const BREAKDOWN_VIEW: Record<Breakdown, (input: BreakdownInput) => BreakdownView> = {
   month: monthView,
   overview: ({ alerts, picked, choose }) => ({
@@ -281,7 +290,7 @@ const BREAKDOWN_VIEW: Record<Breakdown, (input: BreakdownInput) => BreakdownView
     const by = settings.dayBy ?? 'priority';
     const [date, key] = picked?.split('|') ?? [];
     const day = date && dailyHistory(alerts, date, date).days[0];
-    const values = day ? key === 'created' ? day.created : key === 'closed-at' ? day.closed : day.created.filter(a => a[by] === key) : [];
+    const values = day ? dayAlerts(day, key, by) : [];
     return {
       ranking: <HistoryDaily alerts={alerts} from={from} to={to} by={by} picked={picked} choose={choose} />,
       selection: day ? { title: `${formatUtcDay(parseUtcDate(date)!)} (UTC) · ${key === 'closed-at' ? 'Closed that day' : statusTitle[key as keyof typeof statusTitle] ?? key}`, alerts: values } : null,
@@ -561,9 +570,11 @@ function ReplacedState({ startError, job, cancelError, onCancel, onStartAgain, o
       </div>
     );
   }
-  const message = job
-    ? `Another analysis replaced this one: ${formatUtcRange(job.from, job.to)}${job.state === 'running' ? ', running' : ''}.`
-    : 'The server restarted, and this analysis was lost.';
+  let message = 'The server restarted, and this analysis was lost.';
+  if (job) {
+    const running = job.state === 'running' ? ', running' : '';
+    message = `Another analysis replaced this one: ${formatUtcRange(job.from, job.to)}${running}.`;
+  }
   return (
     <div className="flex flex-wrap items-center gap-2 p-3 text-sm text-muted">
       <output>{message}</output>

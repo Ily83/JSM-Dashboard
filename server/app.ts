@@ -7,6 +7,7 @@ import { DAY_MS, HISTORY_MAX_OFFSET, HISTORY_PAGE_SIZE, HISTORY_WINDOW_DAYS, his
 import { HISTORY_ANALYSIS_RESULT_PAGE_SIZE } from '../shared/historyAnalysis';
 import type { ApiError, StatusResponse } from '../shared/types';
 import { ATTACHMENT_MAX_BYTES } from '../shared/actions';
+import { bodyErrorMessage, bodyErrorStatus } from './bodyErrors';
 import type { AppConfig } from './config';
 import { JiraApiError, type JiraErrorKind } from './jira/client';
 import { log } from './logger';
@@ -326,8 +327,8 @@ export function createApp(
       res.status(409).json({ error: 'Analysis results are not ready.' } satisfies ApiError);
       return;
     }
-    const monthIndex = typeof req.query.month === 'string' && /^\d+$/.test(req.query.month) ? Number(req.query.month) : NaN;
-    const offset = typeof req.query.offset === 'string' && /^\d+$/.test(req.query.offset) ? Number(req.query.offset) : NaN;
+    const monthIndex = typeof req.query.month === 'string' && /^\d+$/.test(req.query.month) ? Number(req.query.month) : Number.NaN;
+    const offset = typeof req.query.offset === 'string' && /^\d+$/.test(req.query.offset) ? Number(req.query.offset) : Number.NaN;
     const month = results[monthIndex];
     if (!month || !Number.isSafeInteger(offset) || offset > month.alerts.length || offset % HISTORY_ANALYSIS_RESULT_PAGE_SIZE !== 0) {
       res.status(400).json({ error: 'Invalid analysis result page.' } satisfies ApiError);
@@ -442,13 +443,10 @@ export function createApp(
       return;
     }
     // Malformed or oversized JSON body (express.json).
-    const status = typeof error === 'object' && error !== null && 'type' in error && 'status' in error ? error.status : null;
-    if (typeof status === 'number') {
-      if (status >= 400 && status < 500) {
-        const message = status === 413 ? 'The request is too large.' : status === 415 ? 'Unsupported request encoding.' : 'The request body is not valid.';
-        res.status(status).json({ error: message } satisfies ApiError);
-        return;
-      }
+    const bodyStatus = bodyErrorStatus(error);
+    if (bodyStatus !== null) {
+      res.status(bodyStatus).json({ error: bodyErrorMessage(bodyStatus) } satisfies ApiError);
+      return;
     }
     // Error name and route only: messages could carry upstream data.
     log.error('request failed', { route: req.route?.path ?? 'unknown', name: error instanceof Error ? error.name : 'unknown' });

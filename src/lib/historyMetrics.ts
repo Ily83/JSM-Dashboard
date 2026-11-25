@@ -36,15 +36,22 @@ function entry(key: string, label: string, alerts: Alert[]): RankedEntry {
   return { key, label, count: alerts.length, total: alerts.length, alerts, p1: alerts.filter(a => a.priority === 'P1').length };
 }
 
-export function rankHistory(alerts: Alert[], by: NonNullable<AnalysisSettings['rankBy']>) {
+type RankBy = NonNullable<AnalysisSettings['rankBy']>;
+
+/** The bars one alert counts in, key to label: its source, each of its tags or each team responder; a "none" bar else. */
+export function rankKeys(alert: Alert, by: RankBy): Map<string, string> {
+  let keys: Map<string, string>;
+  if (by === 'source') keys = new Map([[historySource(alert), historySource(alert)]]);
+  else if (by === 'tag') keys = new Map(historyTags(alert).map((tag): [string, string] => [tag, tag]));
+  else keys = new Map(alert.responders.filter((r) => r.type === 'team').map((r): [string, string] => [r.id, r.name ?? r.id]));
+  if (!keys.size) keys.set('', by === 'tag' ? 'No tags' : 'No team responder');
+  return keys;
+}
+
+export function rankHistory(alerts: Alert[], by: RankBy) {
   const groups = new Map<string, { label: string; alerts: Alert[] }>();
   for (const a of alerts) {
-    const keys = new Map<string, string>();
-    if (by === 'source') keys.set(historySource(a), historySource(a));
-    else if (by === 'tag') for (const tag of historyTags(a)) keys.set(tag, tag);
-    else for (const r of a.responders) if (r.type === 'team') keys.set(r.id, r.name ?? r.id);
-    if (!keys.size) keys.set('', by === 'tag' ? 'No tags' : 'No team responder');
-    for (const [key, label] of keys) {
+    for (const [key, label] of rankKeys(a, by)) {
       if (!groups.has(key)) groups.set(key, { label, alerts: [] });
       groups.get(key)!.alerts.push(a);
     }

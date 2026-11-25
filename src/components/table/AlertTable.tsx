@@ -16,6 +16,7 @@ import { useStore } from '../../lib/store';
 import type { Density } from '../../state/prefs';
 import { tableLayoutStore, type TableLayout } from '../../state/tableLayout';
 import { COLUMNS, renderCell, type CellOptions } from './columns';
+import { edgeScrollStep, rowRangeSelection } from './rowSelection';
 import { arrowToggles, checkState, countSelected, dragMode, navigationTarget, rowAtContentY } from './tableHelpers';
 
 /**
@@ -106,6 +107,14 @@ function apply<T>(updater: Updater<T>, current: T): T {
 
 function patchLayout<K extends keyof TableLayout>(key: K, updater: Updater<TableLayout[K]>): void {
   tableLayoutStore.set((layout) => ({ ...layout, [key]: apply(updater, layout[key]) }));
+}
+
+/** Draws the selection box from the drag's fixed corner to the pointer, both in content coordinates. */
+function placeSelectionBox(box: HTMLElement, drag: Pick<DragState, 'anchorX' | 'anchorY'>, x: number, y: number): void {
+  box.style.left = `${Math.min(drag.anchorX, x)}px`;
+  box.style.top = `${Math.min(drag.anchorY, y)}px`;
+  box.style.width = `${Math.abs(x - drag.anchorX)}px`;
+  box.style.height = `${Math.abs(y - drag.anchorY)}px`;
 }
 
 export const AlertTable = memo(function AlertTable({
@@ -226,30 +235,17 @@ export const AlertTable = memo(function AlertTable({
     const element = scrollRef.current;
     if (!drag?.active || !element || !onSelectionChange) return;
     const rect = element.getBoundingClientRect();
-    let step = 0;
-    if (drag.clientY < rect.top + HEADER_HEIGHT + 32) step = -12;
-    else if (drag.clientY > rect.bottom - 32) step = 12;
+    const step = edgeScrollStep(drag.clientY, rect.top + HEADER_HEIGHT, rect.bottom);
     const before = element.scrollTop;
     if (step) element.scrollTop += step;
     // The pointer in content coordinates, like the anchor, so the box stays on its rows while scrolling.
     const x = Math.max(rect.left, Math.min(rect.right, drag.clientX)) - rect.left + element.scrollLeft;
     const y = Math.max(rect.top + HEADER_HEIGHT, Math.min(rect.bottom, drag.clientY)) - rect.top + element.scrollTop;
-    const box = boxRef.current;
-    if (box) {
-      box.style.left = `${Math.min(drag.anchorX, x)}px`;
-      box.style.top = `${Math.min(drag.anchorY, y)}px`;
-      box.style.width = `${Math.abs(x - drag.anchorX)}px`;
-      box.style.height = `${Math.abs(y - drag.anchorY)}px`;
-    }
+    if (boxRef.current) placeSelectionBox(boxRef.current, drag, x, y);
     const end = rowAtContentY(y, HEADER_HEIGHT, rowHeight, itemsRef.current.length);
     if (end !== drag.endIndex) {
       drag.endIndex = end;
-      const next = new Set(drag.base);
-      for (let i = Math.min(drag.startIndex, end); i <= Math.max(drag.startIndex, end); i += 1) {
-        const item = itemsRef.current[i];
-        if (item && item.kind !== 'lane') for (const alert of alertsOfItem(item)) next.add(alert.id);
-      }
-      onSelectionChange(next);
+      onSelectionChange(rowRangeSelection(itemsRef.current, drag.startIndex, end, drag.base));
     }
     // Keep scrolling while the pointer rests at an edge.
     if (step && element.scrollTop !== before) dragFrame.current = requestAnimationFrame(dragTick);
@@ -301,11 +297,11 @@ export const AlertTable = memo(function AlertTable({
       keyEvent.stopPropagation();
       endDragRef.current(true);
     };
-    window.addEventListener('blur', onBlur);
-    window.addEventListener('keydown', onKey, true);
+    globalThis.addEventListener('blur', onBlur);
+    globalThis.addEventListener('keydown', onKey, true);
     dragCleanup.current = () => {
-      window.removeEventListener('blur', onBlur);
-      window.removeEventListener('keydown', onKey, true);
+      globalThis.removeEventListener('blur', onBlur);
+      globalThis.removeEventListener('keydown', onKey, true);
     };
   };
 
@@ -315,7 +311,7 @@ export const AlertTable = memo(function AlertTable({
     if (!selectable || event.button !== 0 || event.pointerType !== 'mouse') return;
     const target = event.target as HTMLElement;
     const row = target.closest<HTMLElement>('.at-row[data-index]');
-    if (!row || row.hasAttribute('data-lane') || target.closest('button, a, [role="button"], input:not([type="checkbox"])')) return;
+    if (!row || row.dataset.lane !== undefined || target.closest('button, a, [role="button"], input:not([type="checkbox"])')) return;
     const element = event.currentTarget;
     const rect = element.getBoundingClientRect();
     dragSelection.current = {
@@ -337,7 +333,7 @@ export const AlertTable = memo(function AlertTable({
 
   const onSelectionPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const drag = dragSelection.current;
-    if (!drag || drag.pointerId !== event.pointerId || !onSelectionChange) return;
+    if (drag?.pointerId !== event.pointerId || !onSelectionChange) return;
     // Released outside the window: no pointerup arrived.
     if ((event.buttons & 1) === 0) {
       endDrag();
@@ -361,7 +357,7 @@ export const AlertTable = memo(function AlertTable({
 
   const onSelectionPointerUp = (event: PointerEvent<HTMLDivElement>) => {
     const drag = dragSelection.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag?.pointerId !== event.pointerId) return;
     if (drag.active) suppressClick.current = true;
     endDrag();
   };
@@ -543,20 +539,9 @@ export const AlertTable = memo(function AlertTable({
 
   const virtualRows = virtualizer.getVirtualItems();
 
-  const onRowClickCapture = (event: MouseEvent<HTMLDivElement>) => {
-    // Keyboard activation (detail 0) is never the end of a drag.
-    if (event.detail === 0) return;
-    const target = event.target as HTMLElement;
-    const control = target.closest('.at-select, button, input, a, [role="button"]');
-    // The second click of a double-click selects a word; it must not toggle or reopen the row.
-    const wordClick = event.detail > 1 && !control;
-    if (suppressClick.current || wordClick) {
-      suppressClick.current = false;
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (!selectable || !onSelectionChange || control) return;
+  /** Ctrl or Cmd+click toggles a row and Shift+click selects a range; a plain click only moves the range's anchor. */
+  const selectByClick = (event: MouseEvent<HTMLDivElement>, target: HTMLElement) => {
+    if (!onSelectionChange) return;
     const row = target.closest<HTMLElement>('.at-row[data-index]');
     if (!row) return;
     const index = Number(row.dataset.index);
@@ -576,11 +561,23 @@ export const AlertTable = memo(function AlertTable({
     const anchor = items.findIndex((entry) => itemKey(entry) === selectionAnchor.current);
     const start = anchor < 0 ? index : anchor;
     if (anchor < 0) selectionAnchor.current = itemKey(item);
-    const next = new Set(additive ? selectionRef.current : undefined);
-    for (let i = Math.min(start, index); i <= Math.max(start, index); i += 1) {
-      if (items[i].kind !== 'lane') for (const alert of alertsOfItem(items[i])) next.add(alert.id);
+    onSelectionChange(rowRangeSelection(items, start, index, additive ? selectionRef.current : undefined));
+  };
+
+  const onRowClickCapture = (event: MouseEvent<HTMLDivElement>) => {
+    // Keyboard activation (detail 0) is never the end of a drag.
+    if (event.detail === 0) return;
+    const target = event.target as HTMLElement;
+    const control = target.closest('.at-select, button, input, a, [role="button"]');
+    // The second click of a double-click selects a word; it must not toggle or reopen the row.
+    const wordClick = event.detail > 1 && !control;
+    if (suppressClick.current || wordClick) {
+      suppressClick.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
     }
-    onSelectionChange(next);
+    if (selectable && !control) selectByClick(event, target);
   };
 
   return (

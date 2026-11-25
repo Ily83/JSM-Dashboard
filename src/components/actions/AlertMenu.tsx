@@ -25,6 +25,7 @@ import { cn } from '../../lib/cn';
 import { button, confirmCloseButton, primaryButton } from '../ui/buttons';
 import { placeMenu, type MenuAnchor } from '../ui/menuPlacement';
 import { appliesTo, CONFIRM_LABEL, needsConfirm, questionText, type BulkOperation, type BulkRequest, type PickerAction } from './bulkRules';
+import { menuMove, tabWrap } from './menuKeys';
 import { AssignPicker, EscalatePicker, PriorityPicker, ResponderPicker, SnoozePicker } from './Pickers';
 
 /**
@@ -386,39 +387,29 @@ export function AlertMenu({
     }
   };
 
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const element = ref.current;
-    if (!element) return;
-    if (event.key === 'Tab') {
-      if (view.kind === 'list') {
-        event.preventDefault();
-        close(true);
-        return;
-      }
-      // Pickers and questions keep Tab inside, like a dialog.
-      const controls = focusables(element);
-      if (controls.length === 0) return;
-      const index = controls.indexOf(document.activeElement as HTMLElement);
-      const edge = event.shiftKey ? index <= 0 : index === controls.length - 1;
-      if (edge) {
-        event.preventDefault();
-        controls[event.shiftKey ? controls.length - 1 : 0].focus();
-      }
+  /** Tab closes the list; pickers and questions keep Tab inside, like a dialog. */
+  const onTab = (element: HTMLElement, event: KeyboardEvent<HTMLDivElement>) => {
+    if (view.kind === 'list') {
+      event.preventDefault();
+      close(true);
       return;
     }
-    if (view.kind !== 'list') return;
-    const menuItems = Array.from(element.querySelectorAll<HTMLElement>('[role="menuitem"]'));
-    const index = menuItems.indexOf(document.activeElement as HTMLElement);
-    const last = menuItems.length - 1;
-    const moves: Record<string, number> = {
-      ArrowDown: index < 0 || index === last ? 0 : index + 1,
-      ArrowUp: index <= 0 ? last : index - 1,
-      Home: 0,
-      End: last,
-    };
-    if (event.key in moves) {
+    const controls = focusables(element);
+    if (controls.length === 0) return;
+    const target = tabWrap(controls.indexOf(document.activeElement as HTMLElement), controls.length, event.shiftKey);
+    if (target !== null) {
       event.preventDefault();
-      menuItems[moves[event.key]]?.focus();
+      controls[target].focus();
+    }
+  };
+
+  /** Arrow keys, Home and End move between the items; A, U and C run their action. */
+  const onListKey = (element: HTMLElement, event: KeyboardEvent<HTMLDivElement>) => {
+    const menuItems = Array.from(element.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    const target = menuMove(event.key, menuItems.indexOf(document.activeElement as HTMLElement), menuItems.length);
+    if (target !== undefined) {
+      event.preventDefault();
+      menuItems[target]?.focus();
       return;
     }
     const accelerator = event.ctrlKey || event.metaKey || event.altKey ? undefined : ACCELERATOR[event.key.toLowerCase()];
@@ -426,6 +417,13 @@ export function AlertMenu({
       event.preventDefault();
       activate(accelerator);
     }
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const element = ref.current;
+    if (!element) return;
+    if (event.key === 'Tab') onTab(element, event);
+    else if (view.kind === 'list') onListKey(element, event);
   };
 
   let content: ReactNode;
@@ -437,7 +435,7 @@ export function AlertMenu({
         </div>
         {items.map((group, index) => (
           <Fragment key={group[0].id}>
-            {index > 0 && <div role="separator" className="mx-1 my-1 border-t border-line" />}
+            {index > 0 && <hr className="mx-1 my-1 border-t border-line" />}
             {group.map((item) => (
               <MenuItemButton key={item.id} item={item} showCount={many} hints onActivate={activate} />
             ))}

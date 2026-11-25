@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, CheckCheck, CircleCheck, Ellipsis, ListChecks, Loader2, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { ACTION_LABEL, BULK_ACTION_IDS, type ActionId, type BulkActionId } from '../../../shared/actions';
@@ -8,7 +8,7 @@ import { postAction } from '../../api/client';
 import { cn } from '../../lib/cn';
 import { button, confirmCloseButton, iconButton, primaryButton, quietButton } from '../ui/buttons';
 import { anchorFromRect } from '../ui/menuPlacement';
-import { Popover } from '../ui/Popover';
+import { Popover, type PopoverTriggerProps } from '../ui/Popover';
 import { AlertMenu, type AlertContextMenu } from './AlertMenu';
 import { appliesTo, needsConfirm, questionText, resultText, type BulkOperation, type BulkRequest } from './bulkRules';
 
@@ -129,17 +129,18 @@ function OutcomeText({ outcome }: Readonly<{ outcome: Outcome }>) {
   );
 }
 
+function renderFailedButton(props: PopoverTriggerProps, count: number) {
+  return (
+    <button type="button" {...props} className="flex-none rounded px-1 py-0.5 font-semibold text-crit underline-offset-2 hover:bg-hover hover:underline active:bg-line">
+      {count} failed
+    </button>
+  );
+}
+
 /** Failures stay one click away: the list opens under the count. */
 function FailedButton({ failures }: Readonly<{ failures: Failure[] }>) {
   return (
-    <Popover
-      label="Failed alerts"
-      trigger={(props) => (
-        <button type="button" {...props} className="flex-none rounded px-1 py-0.5 font-semibold text-crit underline-offset-2 hover:bg-hover hover:underline active:bg-line">
-          {failures.length} failed
-        </button>
-      )}
-    >
+    <Popover label="Failed alerts" trigger={(props) => renderFailedButton(props, failures.length)}>
       {() => <FailureList failures={failures} />}
     </Popover>
   );
@@ -170,7 +171,10 @@ export function BulkActionBar({
   const busy = phase.kind === 'running';
 
   // A pending question is dropped when the selection changes or a menu opens.
-  const selectionKey = selected.map((alert) => alert.id).sort().join('\0');
+  const selectionKey = selected
+    .map((alert) => alert.id)
+    .sort((a, b) => a.localeCompare(b))
+    .join('\0');
   const currentSelection = useRef(selectionKey);
   useEffect(() => {
     if (currentSelection.current === selectionKey) return;
@@ -257,16 +261,15 @@ export function BulkActionBar({
       focusNext.current = phase.from;
       setPhase({ kind: 'idle' });
     };
+    // Escape on either button of the question goes back, as Cancel does.
+    const onQuestionKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      back();
+    };
     main = (
-      <div
-        className="flex min-w-0 items-center gap-2"
-        onKeyDown={(event) => {
-          if (event.key !== 'Escape') return;
-          event.preventDefault();
-          event.stopPropagation();
-          back();
-        }}
-      >
+      <div className="flex min-w-0 items-center gap-2">
         <span id={questionId} className="min-w-0 truncate font-semibold" data-tip={questionText(phase.request, phase.targets.length)}>
           {questionText(phase.request, phase.targets.length)}
         </span>
@@ -284,11 +287,12 @@ export function BulkActionBar({
             focusNext.current = phase.from;
             void run(phase.request, undefined, phase.targets, phase.skipped);
           }}
+          onKeyDown={onQuestionKeyDown}
         >
           {phase.request.action === 'close' && <Check size={13} aria-hidden />}
           Confirm
         </button>
-        <button type="button" className={button} onClick={back}>
+        <button type="button" className={button} onClick={back} onKeyDown={onQuestionKeyDown}>
           Cancel
         </button>
       </div>
@@ -375,9 +379,9 @@ export function BulkActionBar({
               </span>
             </span>
           )}
-          <div role="status" className="flex min-w-0 items-center gap-2">
+          <output className="flex min-w-0 items-center gap-2">
             {shownOutcome && <OutcomeText outcome={shownOutcome} />}
-          </div>
+          </output>
           {shownOutcome && shownOutcome.failures.length > 0 && <FailedButton key={shownOutcome.id} failures={shownOutcome.failures} />}
           {shownOutcome && (
             <button

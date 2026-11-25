@@ -232,6 +232,13 @@ function writeActionsLabel(status: StatusResponse): ReactNode {
   return status.writes.actions.map((id) => ACTION_LABEL[id]).join(', ');
 }
 
+/** The line beside Save settings: a failed save, or a save with nothing changed since. */
+function saveMessage(saveResult: 'saved' | 'failed' | null, hasChanges: boolean): string {
+  if (saveResult === 'failed') return 'Could not save settings in this browser.';
+  if (saveResult === 'saved' && !hasChanges) return 'Settings saved in this browser.';
+  return '';
+}
+
 interface SettingsViewProps {
   status: StatusResponse | undefined;
   /** Values seen in the current data, offered in the profile fields. */
@@ -274,7 +281,7 @@ export function SettingsView({ status, assignees, customers }: Readonly<Settings
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="sticky top-0 z-10 flex min-h-11 items-center justify-end gap-3 border-b border-line bg-panel px-4 py-1.5">
         <output className={cn('text-xs', saveResult === 'failed' ? 'text-crit' : 'text-muted')}>
-          {saveResult === 'failed' ? 'Could not save settings in this browser.' : saveResult === 'saved' && !hasChanges ? 'Settings saved in this browser.' : ''}
+          {saveMessage(saveResult, hasChanges)}
         </output>
         <button type="button" className={primaryButton} disabled={!hasChanges && saveResult !== 'failed'} onClick={saveSettings}>
           <Save size={14} aria-hidden />

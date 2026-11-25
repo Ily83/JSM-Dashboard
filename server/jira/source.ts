@@ -346,7 +346,10 @@ export class JiraSource implements AlertSource {
     const teams = new Set(escalations.flatMap(a => (a.responders ?? []).filter(r => r.type === 'team').map(r => r.id)));
     // Standalone escalation responders don't carry their owning team in the alert.
     if (escalations.some(a => !a.responders?.some(r => r.type === 'team'))) {
-      for (const id of this.teamNames.keys()) { if (teams.size >= 8) break; teams.add(id); }
+      for (const id of this.teamNames.keys()) {
+        if (teams.size >= 8) break;
+        teams.add(id);
+      }
     }
     const reads = [...teams].slice(0, 8).map(async id => {
       for (const e of await directory.escalations(id)) this.directoryNames.set(`escalation:${e.id}`, e.name);

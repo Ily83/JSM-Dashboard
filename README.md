@@ -103,11 +103,23 @@ Open an alert to edit or delete notes and upload attachments up to 10 MiB. Enabl
 | `npm run typecheck` | TypeScript check |
 | `npm run e2e` | Browser tests in demo mode; first install Chromium with `npx playwright install chromium` |
 | `npm run test:coverage` | Generate `coverage/lcov.info` for SonarQube |
-| `npm run e2e:live` | Creates and changes alerts on the configured Jira **test site** |
+| `npm run e2e:live` | Creates and changes alerts on the configured Jira **test site** with the API token (forces basic sign-in for its own server) |
+| `npm run e2e:live:login`, then `npm run e2e:live:oauth` | Checks writes as the signed-in OAuth user on your running instance (below) |
 | `npm run jira:test-alerts -- create --yes` | Creates test alerts; `close --yes` closes them |
 | `npm run jira:simulate -- run --yes` | Runs a test-site scenario; `cleanup --yes` closes its alerts and removes its heartbeat |
 
 **Never run live tests, test-alert creation or simulation against a production site.** Demo mode can be forced with `DEMO_MODE=true`; `DEMO_ALERT_COUNT=20000` adds sample alerts for scale testing.
+
+### Live tests with OAuth
+
+OAuth sessions exist only in the memory of the instance you signed in to, so these tests use your running instance (the origin of `JIRA_OAUTH_REDIRECT_URI`, or `E2E_LIVE_URL`). Test site only.
+
+1. Enable the actions to test in `JIRA_WRITE_ACTIONS`, then `npm run build` and `npm start`.
+2. On the test site, create one disposable open alert tagged `alert-center-oauth-e2e`. The tests change only that alert.
+3. `npm run e2e:live:login` opens Chromium: sign in and grant access; the window closes by itself. This signs out other browsers on that instance.
+4. `npm run e2e:live:oauth`. Each test notes Jira's answer. The alert stays assigned to you and keeps the uploaded file; a snooze can last its 5 minutes. The maintenance test keeps a global alert policy in its current state and cancels the window at once.
+5. For token refresh, run `npm run e2e:live:oauth -- -g "token refresh"` between one and eight hours after signing in.
+6. Delete the saved sign-in afterwards: `rm e2e/.auth/oauth-session.json`. It is a live session (git-ignored, mode 0600).
 
 ### Acceptance checks for the portable app, OAuth and History
 

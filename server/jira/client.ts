@@ -229,6 +229,23 @@ function parseResponse<S extends z.ZodType>(json: unknown, schema: S, status: nu
   return parsed.data;
 }
 
+/** Fetch options of one Jira request: a JSON or multipart body, and the credentials only when authenticated. */
+function requestInit(method: string, body: unknown, authenticated: boolean, authorization: string, timeoutMs: number): RequestInit {
+  const multipart = body instanceof FormData;
+  return {
+    method,
+    headers: {
+      Accept: 'application/json',
+      ...(body === undefined || multipart ? {} : { 'Content-Type': 'application/json' }),
+      ...(authenticated ? { Authorization: authorization } : {}),
+    },
+    ...(body === undefined ? {} : { body: multipart ? body : JSON.stringify(body) }),
+    // Never follow a redirect with credentials attached.
+    redirect: authenticated ? 'error' : 'follow',
+    signal: AbortSignal.timeout(timeoutMs),
+  };
+}
+
 /** Request body of Create global / team maintenance (CreateMaintenanceRequest), as documented. */
 export type MaintenanceEntityType = 'integration' | 'policy' | 'sync';
 export type MaintenanceRuleState = 'disabled' | 'enabled';
@@ -708,20 +725,8 @@ export class JiraClient {
     let response: Response;
     this.requestCount += 1;
     const authorization = this.bearer ? `Bearer ${await this.bearer.token()}` : this.authorization;
-    const multipart = body instanceof FormData;
     try {
-      response = await this.fetchImpl(url, {
-        method,
-        headers: {
-          Accept: 'application/json',
-          ...(body === undefined || multipart ? {} : { 'Content-Type': 'application/json' }),
-          ...(authenticated ? { Authorization: authorization } : {}),
-        },
-        ...(body === undefined ? {} : { body: multipart ? body : JSON.stringify(body) }),
-        // Never follow a redirect with credentials attached.
-        redirect: authenticated ? 'error' : 'follow',
-        signal: AbortSignal.timeout(this.config.requestTimeoutMs),
-      });
+      response = await this.fetchImpl(url, requestInit(method, body, authenticated, authorization, this.config.requestTimeoutMs));
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
       log.warn('jira request failed', { path: safePath, reason: timedOut ? 'timeout' : 'network', ms: Date.now() - started });
