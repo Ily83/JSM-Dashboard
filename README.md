@@ -60,6 +60,7 @@ If you enable writes, also enable the corresponding console permissions and sign
 | Alert writes other than removing tags or deleting notes | `write:ops-alert:jira-service-management` |
 | Remove tags or delete notes | `delete:ops-alert:jira-service-management` |
 | Maintenance writes | `write:ops-config:jira-service-management` |
+| Notification settings (`notifications`) | `write:ops-config:jira-service-management` and `delete:ops-config:jira-service-management` |
 | Assign or add responder (people picker) | Jira API `read:jira-user` |
 
 OAuth uses the [JSM Operations gateway](https://developer.atlassian.com/cloud/jira/service-desk-ops/security/oauth-2-3lo-apps/) and the user's Jira permissions. One session is active per backend; tokens remain in memory. Restarting, session expiry after eight hours, or signing out requires a new sign-in. Local sign-out does not sign you out of Atlassian or Windows.
@@ -105,6 +106,17 @@ Writes are disabled by default. To enable them, set `JIRA_WRITE_ACTIONS` in `.en
 Actions include acknowledging, closing, assigning, snoozing, notes, tags and maintenance windows. Bulk actions report per-alert outcomes. Jira permissions and plan restrictions apply; actions use the signed-in OAuth user or the configured API-token account.
 
 Open an alert to edit or delete notes and upload attachments up to 10 MiB. Enable `editNote`, `deleteNote`, or `uploadAttachment` as needed. Demo writes only affect memory, and demo uploads retain metadata but not file contents. Reopening closed alerts is not available.
+
+### Alert notifications
+
+**Alert notifications** in the sidebar shows your own Jira notification settings, as on Jira's *Personal settings > Alert notifications* page. Changing them needs `notifications` in `JIRA_WRITE_ACTIONS`; without it the page is read-only.
+
+- **Contact methods:** add, change, switch on or off and delete email, SMS and voice contacts. Jira checks the address or number.
+- **Mobile push:** sign in to the Jira mobile app on your phone. The phone then appears as a contact and can be added to rules; registering it is only possible in the app.
+- **Notification rules,** for each event (new, acknowledged, closed and assigned alert, add note, schedule start and end, incoming call routing): add, rename, switch on or off and delete rules; add or remove notification methods; for new and assigned alerts, wait before notifying; limit a rule to alerts matching a query (for example `priority:P1 AND tags:prod`) or to a daily time window; repeat new-alert notifications until the alert is seen; choose when schedule rules notify.
+- **Removing a time limit:** Jira cannot remove one from a rule, so the app replaces the rule with a copy without it, at the end of its list.
+- **In Jira only:** Do Not Disturb, the order of rules, and weekday time windows (shown and kept, not edited).
+- The settings belong to the signed-in OAuth user, or to the API-token account.
 
 ## Checks and test tools
 

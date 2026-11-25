@@ -29,6 +29,11 @@ import {
   OpsEntitySchema,
   PagedValuesSchema,
   ScheduleSchema,
+  CreatedIdSchema,
+  RawContactSchema,
+  RawNotificationRuleSchema,
+  type RawContact,
+  type RawNotificationRule,
   type RawMaintenance,
   type RawOnCallParticipant,
 } from './schemas';
@@ -590,6 +595,58 @@ export class JiraClient {
   }
 
   /** Ping heartbeat (GET /v1/teams/{teamId}/heartbeats/ping?name=). */
+  // ---- Personal notification settings (the signed-in user's own) ----------
+
+  listContacts(): Promise<RawContact[]> {
+    return this.pages('/v1/users/contacts', RawContactSchema, 100, 5);
+  }
+
+  listNotificationRules(): Promise<RawNotificationRule[]> {
+    return this.pages('/v1/notification-rules', RawNotificationRuleSchema, 100, 5);
+  }
+
+  async createContact(method: string, to: string): Promise<void> {
+    await this.write('POST', '/v1/users/contacts', { method, to }, z.unknown());
+  }
+
+  async updateContact(id: string, to: string): Promise<void> {
+    await this.write('PATCH', `/v1/users/contacts/${encodeURIComponent(id)}`, { to }, z.unknown());
+  }
+
+  async setContactEnabled(id: string, enabled: boolean): Promise<void> {
+    await this.write('PATCH', `/v1/users/contacts/${encodeURIComponent(id)}/${enabled ? 'activate' : 'deactivate'}`, undefined, z.unknown());
+  }
+
+  async deleteContact(id: string): Promise<void> {
+    await this.write('DELETE', `/v1/users/contacts/${encodeURIComponent(id)}`, undefined, z.unknown());
+  }
+
+  /** Jira answers 201 with the rule. */
+  createNotificationRule(body: unknown): Promise<{ id: string }> {
+    return this.write('POST', '/v1/notification-rules', body, CreatedIdSchema);
+  }
+
+  /** Fields left out keep their value. Jira requires name, actionType and enabled. */
+  async updateNotificationRule(id: string, body: unknown): Promise<void> {
+    await this.write('PATCH', `/v1/notification-rules/${encodeURIComponent(id)}`, body, z.unknown());
+  }
+
+  async deleteNotificationRule(id: string): Promise<void> {
+    await this.write('DELETE', `/v1/notification-rules/${encodeURIComponent(id)}`, undefined, z.unknown());
+  }
+
+  async createRuleStep(ruleId: string, body: unknown): Promise<void> {
+    await this.write('POST', `/v1/notification-rules/${encodeURIComponent(ruleId)}/steps`, body, z.unknown());
+  }
+
+  async updateRuleStep(ruleId: string, id: string, body: unknown): Promise<void> {
+    await this.write('PATCH', `/v1/notification-rules/${encodeURIComponent(ruleId)}/steps/${encodeURIComponent(id)}`, body, z.unknown());
+  }
+
+  async deleteRuleStep(ruleId: string, id: string): Promise<void> {
+    await this.write('DELETE', `/v1/notification-rules/${encodeURIComponent(ruleId)}/steps/${encodeURIComponent(id)}`, undefined, z.unknown());
+  }
+
   async pingHeartbeat(teamId: string, name: string): Promise<void> {
     await this.get(`/v1/teams/${encodeURIComponent(teamId)}/heartbeats/ping`, z.unknown(), { name }, 'read');
   }

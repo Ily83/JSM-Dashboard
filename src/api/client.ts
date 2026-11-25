@@ -9,6 +9,7 @@ import type {
   Page,
 } from '../../shared/actions';
 import type { AlertDetail, AlertsResponse, HistoryResponse, StatusResponse } from '../../shared/types';
+import type { NotificationChange, NotificationsResponse } from '../../shared/notifications';
 import { DESKTOP_CONFIG_API, type DesktopConfigResponse, type DesktopConfigSaveRequest, type DesktopConfigSaveResponse } from '../../shared/desktopConfig';
 import { HISTORY_ANALYSIS_RESULT_PAGE_SIZE, type HistoryAnalysisResultPage, type HistoryAnalysisStatus, type HistoryMonth } from '../../shared/historyAnalysis';
 
@@ -196,5 +197,19 @@ export function saveDesktopConfig(request: DesktopConfigSaveRequest): Promise<De
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Alert-Center-Action': '1' },
     body: JSON.stringify(request),
+  });
+}
+
+/** The signed-in user's contacts and notification rules in Jira. */
+export function fetchNotifications(signal?: AbortSignal): Promise<NotificationsResponse> {
+  return getJson('/api/notifications', signal);
+}
+
+/** One change to them; the answer is the settings as Jira holds them afterwards. */
+export function changeNotifications(change: NotificationChange): Promise<NotificationsResponse> {
+  return getJson('/api/notifications', undefined, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Alert-Center-Action': '1' },
+    body: JSON.stringify(change),
   });
 }

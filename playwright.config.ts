@@ -54,7 +54,7 @@ export default defineConfig({
   },
   projects: [
     { name: 'demo', testDir: 'e2e/demo', use: { baseURL: `http://127.0.0.1:${DEMO_PORT}` } },
-    { name: 'live', testDir: 'e2e/live', testMatch: 'roundtrip.spec.ts', use: { baseURL: `http://127.0.0.1:${LIVE_PORT}` } },
+    { name: 'live', testDir: 'e2e/live', testMatch: ['roundtrip.spec.ts', 'notifications.spec.ts'], use: { baseURL: `http://127.0.0.1:${LIVE_PORT}` } },
     // Traces would hold the session cookie, so none are kept for this project.
     { name: 'live-oauth', testDir: 'e2e/live', testMatch: 'oauth.spec.ts', use: { baseURL: OAUTH_URL, ...oauthSession, trace: 'off' } },
   ],

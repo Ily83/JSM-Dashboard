@@ -14,6 +14,7 @@ import { log } from './logger';
 import type { AlertStore } from './services/alertStore';
 import { HistoryAnalysisService } from './services/historyAnalysis';
 import { ActionRequestError, type ActionService, type AlertOperations } from './services/operations';
+import type { NotificationService } from './services/notifications';
 import type { MaintenanceService, OpsContextSource } from './services/opsContext';
 
 const ALERT_ID = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,128}$/;
@@ -25,8 +26,9 @@ const UPLOAD_ROUTE = /^\/alerts\/[A-Za-z0-9._-]{1,128}\/attachments$/;
 const MAINTENANCE_CREATE_ROUTE = /^\/maintenances$/;
 const MAINTENANCE_CANCEL_ROUTE = /^\/maintenances\/[A-Za-z0-9:._-]{1,128}\/cancel$/;
 const HISTORY_ANALYSIS_START_ROUTE = /^\/history-analysis$/;
+const NOTIFICATIONS_ROUTE = /^\/notifications$/;
 const HISTORY_ANALYSIS_CANCEL_ROUTE = /^\/history-analysis\/cancel$/;
-const WRITE_ROUTES = [ACTION_ROUTE, UPLOAD_ROUTE, MAINTENANCE_CREATE_ROUTE, MAINTENANCE_CANCEL_ROUTE, HISTORY_ANALYSIS_START_ROUTE, HISTORY_ANALYSIS_CANCEL_ROUTE];
+const WRITE_ROUTES = [ACTION_ROUTE, UPLOAD_ROUTE, MAINTENANCE_CREATE_ROUTE, MAINTENANCE_CANCEL_ROUTE, HISTORY_ANALYSIS_START_ROUTE, HISTORY_ANALYSIS_CANCEL_ROUTE, NOTIFICATIONS_ROUTE];
 const isWriteRoute = (path: string) => WRITE_ROUTES.some((route) => route.test(path));
 /** Custom header that a page on another site cannot send without a CORS preflight, which is never granted. */
 export const ACTION_HEADER = 'x-alert-center-action';
@@ -58,6 +60,8 @@ const STATUS_FOR_KIND: Record<JiraErrorKind, number> = {
  *   POST /api/alerts/:id/actions             one write action (only when enabled)
  *   POST /api/maintenances                   create a maintenance window (only when enabled)
  *   POST /api/maintenances/:id/cancel        end or call off one (only when enabled)
+ *   GET  /api/notifications                  the signed-in user's contacts and notification rules
+ *   POST /api/notifications                  one change to them (only when enabled)
  *   GET  /healthz, /readyz                   for hosting; outside /api, no details
  *
  * Every other method and path is rejected. Writes additionally need a JSON
@@ -66,6 +70,7 @@ const STATUS_FOR_KIND: Record<JiraErrorKind, number> = {
 export interface OpsContextRoutes {
   source: OpsContextSource;
   maintenance: MaintenanceService;
+  notifications?: NotificationService;
 }
 
 /** Security headers for every response; the strict content policy applies to the production build. */
@@ -404,6 +409,15 @@ export function createApp(
       }
       res.json(await maintenance.cancel(id, req.body));
     });
+    const { notifications } = opsContext;
+    if (notifications) {
+      api.get('/notifications', async (_req, res) => {
+        res.json(await notifications.read());
+      });
+      api.post('/notifications', ...writeGuard, async (req, res) => {
+        res.json(await notifications.apply(req.body));
+      });
+    }
   }
 
   api.get('/history', async (req, res) => {

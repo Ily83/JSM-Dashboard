@@ -2,6 +2,41 @@
 
 Newest release first. Each release lists what changed, how to install or update, and what is known not to work yet.
 
+## 0.6.0 (2026-11-25)
+
+Your Jira alert notification settings, from the app.
+
+### Update
+
+```bash
+git pull
+npm ci
+```
+
+To change the settings, add `notifications` to `JIRA_WRITE_ACTIONS` and restart. With OAuth, also add `write:ops-config:jira-service-management` and `delete:ops-config:jira-service-management` to your Atlassian app's permissions, then sign in again.
+
+### Added
+
+- **Alert notifications** (sidebar): your own contact methods and notification rules, as on Jira's *Personal settings > Alert notifications*. See [Alert notifications](README.md#alert-notifications).
+  - Contact methods: add, change, switch on or off and delete email, SMS and voice contacts.
+  - Mobile push: sign in to the Jira mobile app; the phone then appears as a contact and can be used in rules.
+  - Rules for each event: add, rename, switch on or off and delete; add or remove notification methods; a delay for new and assigned alerts; a query filter; a daily time window; repeat until seen for new alerts; timing of schedule start and end rules.
+- Read-only unless `notifications` is enabled. Do Not Disturb, rule order and weekday time windows stay in Jira (weekday windows are shown and kept).
+
+### Notes from testing on Jira
+
+- Jira cannot remove a time limit from a rule. The app replaces the rule with a copy without it, at the end of its list, and says so before saving.
+- Jira accepts a step delay only on new alert and assigned alert rules; the app offers it only there.
+- Jira's refusals (for example an invalid phone number) are shown as Jira words them.
+
+### Verification
+
+- Unit and component tests for the mapping of Jira's real answers, validation, the read-only switch, the time-limit replacement (with rollback), and the page.
+- Demo browser test of the whole page.
+- Live test on the test site through the app: a disabled rule gets a notification method, a query, a daily window, then loses the window and is deleted. Nobody was notified.
+- Not tested live: adding an SMS or voice contact (it would contact a real number) and mobile push (needs a phone).
+- The live round trip now waits out Jira's rate limit on its own Jira calls. With about 600 closed alerts on the test site, a freshly started backend used the site's request budget while loading them, and the test failed.
+
 ## 0.5.0 (2026-11-25)
 
 The desktop app can edit its configuration file from Settings.

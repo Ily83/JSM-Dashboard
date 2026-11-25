@@ -1,5 +1,5 @@
 import { memo, useSyncExternalStore } from 'react';
-import { Activity, Bookmark, CalendarDays, CheckCheck, CircleCheck, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Settings, Siren, Star, Workflow, type LucideIcon } from 'lucide-react';
+import { Activity, Bell, Bookmark, CalendarDays, CheckCheck, CircleCheck, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Settings, Siren, Star, Workflow, type LucideIcon } from 'lucide-react';
 import { SECTIONS, SECTION_IDS, type SectionId } from '../config/sections';
 import { cn } from '../lib/cn';
 import type { Route } from '../lib/router';
@@ -116,6 +116,13 @@ export const Sidebar = memo(function Sidebar({ route, counts, countsKnown, colla
               className={item(route.page === 'workflows', collapsed)} data-tip={collapsed ? 'Workflows' : undefined} data-tip-always="">
               <Workflow size={16} aria-hidden className="flex-none" />
               {!collapsed && 'Workflows'}
+            </a>
+          </li>
+          <li>
+            <a href="#/notifications" aria-current={route.page === 'notifications' ? 'page' : undefined} aria-label="Alert notifications"
+              className={item(route.page === 'notifications', collapsed)} data-tip={collapsed ? 'Alert notifications' : undefined} data-tip-always="">
+              <Bell size={16} aria-hidden className="flex-none" />
+              {!collapsed && 'Alert notifications'}
             </a>
           </li>
         </ul>
