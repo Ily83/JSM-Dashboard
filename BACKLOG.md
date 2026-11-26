@@ -33,6 +33,7 @@ Reuse the History date, customer, and tag filters. Label rankings as partial whe
 - [x] **High-volume background analysis:** Scan beyond 500 alerts per month in paced, low-priority batches; split dense windows around Jira's pagination limit and label incomplete results. Progress and cancellation are available; jobs and results remain in memory until the backend restarts or another analysis starts.
 - [ ] **Validate high-volume analysis on a dedicated Jira test site:** Confirm request cost, rate limits, pagination and completeness against representative production-like volumes. Never use live writes for testing.
   - Test data is ready: over 500 alerts tagged `alert-center-volume` were created on the trial site on 2026-11-25. The validation script only accepts a finished UTC day, so run it from 2026-11-26 with `--from 2026-11-25 --to 2026-11-25`.
+  - Read-only Premium run on 2026-11-26: 572 distinct alerts matched Jira's reported total for that UTC day and tag. Six pages, seven HTTP requests including tenant discovery, about seven seconds, no partial results or 429s. An independent fixture manifest and a live dataset beyond the pagination ceiling were not available.
 - [x] **Historical overview:** Total alerts and breakdowns by current status and priority for the selected creation-date range.
 - [x] **Daily trends:** UTC creation counts, daily average, and a comparison to known closure dates for the same creation cohort.
 - [x] **Historical rankings:** Rank sources, team responders and tags, with drill-down and one count per alert per team or tag.
@@ -76,14 +77,19 @@ Measured on the live site on 2026-11-26 (one backend, 09:38–11:07 UTC, about 2
 
 Atlassian does not publish rate limits or their scope (site, organization, user or token) for the JSM Operations API (`api.atlassian.com/jsm/ops/api/{cloudId}`). Jira platform burst limits are per site, endpoint and HTTP method, not per user, so every desktop instance and other integration on the site may share the same allowance.
 
-- [ ] **Confirm the JSM Operations limits** with Atlassian Support: requests per second and minute, and whether they apply per site, organization, user or API token.
-- [ ] **Cap the request rate:** pace Jira calls to a configurable requests-per-second budget instead of only limiting concurrency to 4, so a full sync does not burst.
-- [ ] **Read rate-limit headers:** log `X-RateLimit-*`, `RateLimit-*` and `RateLimit-Reason` when present, slow down when near the limit, and add 429 counts to the sync log line.
-- [ ] **Lower the cost per sync:** fetch only alerts changed since the last sync and reuse cached detail, responder and directory lookups.
-- [ ] **Explain the 35 s cadence:** the early syncs ran about every 35 s although the default refresh is 60 s; check whether several tabs or a shorter browser refresh caused it.
-- [ ] **Multiple desktop instances:** each instance polls Jira separately. Document the cost per instance and recommend one shared backend for a team.
+- [ ] **Track the production team's existing Atlassian support case:** confirm the applicable JSM Operations limits and their scope. Do not open a duplicate case.
+- [x] **Cap the request rate:** space Jira calls and retries at a configurable per-backend budget (`JIRA_REQUESTS_PER_SECOND`, default 4) in addition to the concurrency limit.
+- [x] **Read rate-limit headers:** log allowlisted rate-limit headers, slow down on enforced near-limit hints, respect `Retry-After`, and include HTTP 429 counts and auth mode in sync diagnostics. Tested throttling with a fake upstream.
+- [ ] **Lower the cost per sync:** detail, responder and directory results are already reused. The public Alerts API does not document filtering by `updatedAt`; do not replace the open-alert scan with a creation-time filter, which would miss changes to older alerts.
+- [ ] **Explain the 35 s cadence:** the early syncs ran about every 35 s although the default refresh is 60 s. Staggered tabs or focus refetches can start a sync once the 30 s cache expires, but the earlier logs cannot identify which trigger occurred.
+- [x] **Document the cost of multiple desktop instances:** each instance polls Jira separately; recommend one appropriately secured shared backend for a team. Measure independent instances only in normal use; same-backend tabs share the cache.
 
-Testing on the dedicated test site: measure normal use only (one backend, then two desktop instances or tabs, with header logging once added) and compare requests per sync and per minute with the table above. Record whether the API token or OAuth was used; today's live run did not log it. Atlassian [forbids rate-limit testing](https://developer.atlassian.com/cloud/jira/platform/rate-limiting/#testing-and-compliance) against cloud tenants, test sites included, so test 429 and `Retry-After` handling with a fake `fetch` in unit tests, never by flooding a site.
+On the dedicated test site, observe normal use only, noting browser refresh interval, auth mode, alert volume and any response headers. Atlassian [forbids rate-limit testing](https://developer.atlassian.com/cloud/jira/platform/rate-limiting/#testing-and-compliance) against cloud tenants, test sites included. Test 429 and `Retry-After` with a fake upstream, never by flooding a site.
+
+Read-only Premium observation on 2026-11-26 (API token, one backend, 60 s polling): 523 alerts, none skipped. Cold sync used 44 requests in 11.2 s; two simultaneous tab-equivalent polls shared one light sync (11 requests in 2.7 s). Both phases peaked at four request starts in a rolling second. No 429s or rate-limit headers were observed. This verifies the app's cap, not the site's quota; the larger baseline above used a different alert volume. Independent desktop instances and OAuth traffic were not measured in this run.
+
+- Local `npm run test:load:jira`: 50,000 distinct History records recovered in 504 paced requests. Under a simulated shared quota, 16 desktops each stayed at four requests/sec but together still hit 429s. Each kept its cached 2,500 alerts and recovered on staggered polls after backoff. Simulated external automation also throttled a single desktop; it could preserve a warm cache but could not populate a cold one.
+- [ ] **Production rollout:** Pilot a lower app budget with a small group and monitor request volume, stale data and 429s during normal use. Coordinate the app's request budget across backend instances before broad rollout. The simulated quota is not evidence of a real limit.
 
 ## Ideas from similar projects
 

@@ -123,6 +123,7 @@ Open an alert to edit or delete notes and upload attachments up to 10 MiB. Enabl
 | Command | Purpose |
 | --- | --- |
 | `npm test` | Unit and fake-Jira integration tests |
+| `npm run test:load:jira` | Local-only load tests: 50,000 History alerts, simultaneous desktops, and simulated external Jira traffic |
 | `npm run typecheck` | TypeScript check |
 | `npm run e2e` | Browser tests in demo mode; first install Chromium with `npx playwright install chromium` |
 | `npm run test:coverage` | Generate `coverage/lcov.info` for SonarQube |
@@ -160,6 +161,9 @@ These checks remain open; use a dedicated test site, not production.
 ## Operations and limitations
 
 - The browser refreshes every 60 seconds by default. The backend caches Jira data and retains the last successful result if Jira is unavailable.
+- `JIRA_REQUESTS_PER_SECOND=4` spaces requests from each backend, including retries (configurable from 1 to 20). This is an app budget, not an Atlassian quota. The client slows down on enforced near-limit hints and shares the `Retry-After` cooldown across requests. Beta headers are logged but do not throttle requests. Use `LOG_LEVEL=debug` to see allowlisted rate-limit headers. Sync summaries include auth mode, request count, received `429`s, and duration. Counts cover all Jira requests made by the instance while that sync ran.
+- Browser tabs share one backend's cache and in-flight sync. Staggered polls, focus refetches, and manual refreshes can lead to a backend cadence different from one tab's setting. Separate desktop instances each maintain their own cache and request budget; do not assume each gets a separate Jira quota. Use one appropriately secured shared backend for a team when practical.
+- The cap cannot reserve capacity from other Jira integrations. For production, start with a small pilot and a lower cap (for example, `JIRA_REQUESTS_PER_SECOND=2`); tune `JIRA_ENRICH_MAX_PER_SYNC` and the refresh interval against the team's freshness needs. Watch `429`s, sync duration, and stale-data incidents during normal activity. A warm backend can keep showing cached alerts during throttling; a cold backend cannot. Do not use a live tenant to discover quota thresholds.
 - Maintenance, heartbeats and on-call widgets are optional. Maintenance coverage matches integration names, not policy or sync rules.
 - The app resolves team, schedule and escalation responder names when available; otherwise it shows their IDs. Assign searches the Jira people directory, not just the alert's responders. Jira Free refuses some actions, including assign and snooze.
 - `GET /healthz` checks the process; `GET /readyz` checks whether the first sync succeeded.

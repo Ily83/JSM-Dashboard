@@ -82,6 +82,7 @@ const config: JiraConfig = {
   closedLookbackHours: 72,
   fullSyncMinutes: 15,
   requestTimeoutMs: 5000,
+  requestsPerSecond: 0,
   enrichDetails: 'auto',
   enrichMaxPerSync: 50,
   writeActions: [],
