@@ -64,6 +64,27 @@ Time-of-day, weekday, and business-hours patterns are not planned unless request
 - [ ] **Local agent harness:** Let the operator connect a locally hosted agent or an organization-managed endpoint and choose which tools and alert fields it receives. Support approved MCP servers, including the [Microsoft Learn MCP server](https://learn.microsoft.com/api/mcp) for Azure documentation. Documentation lookups should use service names and symptoms rather than raw customer alert payloads.
 - [ ] **AI-assisted investigation:** From an alert, ask “What should I check first?” Show likely causes, the evidence for each, ordered diagnostic checks, and possible fixes with links to the relevant runbook or Microsoft Learn page. Distinguish observations from hypotheses and flag missing evidence. Suggestions are read-only; the operator decides what to do.
 
+## Jira API usage and rate limits
+
+Measured on the live site on 2026-11-26 (one backend, 09:38–11:07 UTC, about 2,500–3,050 alerts loaded, no 429 and no skipped alerts):
+
+| Period | Sync interval | Requests per sync | Approximate rate |
+| --- | --- | --- | --- |
+| Startup full sync | once, about 10 s | 77 | about 8 requests/s burst |
+| 09:38–10:04 | about 35 s | 70 (full: 76–77) | about 2 requests/s, 120/min |
+| 10:04–11:07 | about 63 s, some 2–3 min gaps | 33–61 (full: 44–61) | about 0.6–0.9 requests/s |
+
+Atlassian does not publish rate limits or their scope (site, organization, user or token) for the JSM Operations API (`api.atlassian.com/jsm/ops/api/{cloudId}`). Jira platform burst limits are per site, endpoint and HTTP method, not per user, so every desktop instance and other integration on the site may share the same allowance.
+
+- [ ] **Confirm the JSM Operations limits** with Atlassian Support: requests per second and minute, and whether they apply per site, organization, user or API token.
+- [ ] **Cap the request rate:** pace Jira calls to a configurable requests-per-second budget instead of only limiting concurrency to 4, so a full sync does not burst.
+- [ ] **Read rate-limit headers:** log `X-RateLimit-*`, `RateLimit-*` and `RateLimit-Reason` when present, slow down when near the limit, and add 429 counts to the sync log line.
+- [ ] **Lower the cost per sync:** fetch only alerts changed since the last sync and reuse cached detail, responder and directory lookups.
+- [ ] **Explain the 35 s cadence:** the early syncs ran about every 35 s although the default refresh is 60 s; check whether several tabs or a shorter browser refresh caused it.
+- [ ] **Multiple desktop instances:** each instance polls Jira separately. Document the cost per instance and recommend one shared backend for a team.
+
+Testing on the dedicated test site: measure normal use only (one backend, then two desktop instances or tabs, with header logging once added) and compare requests per sync and per minute with the table above. Record whether the API token or OAuth was used; today's live run did not log it. Atlassian [forbids rate-limit testing](https://developer.atlassian.com/cloud/jira/platform/rate-limiting/#testing-and-compliance) against cloud tenants, test sites included, so test 429 and `Retry-After` handling with a fake `fetch` in unit tests, never by flooding a site.
+
 ## Ideas from similar projects
 
 Compared with karma, Alerta, Keep, Siren and jsm-tui on 2026-11-19. Scope: Jira Service Management only.
