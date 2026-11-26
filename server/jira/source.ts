@@ -93,19 +93,29 @@ export class JiraSource implements AlertSource {
     const now = Date.now();
     const full = !previous || now - this.lastFullAt >= this.config.fullSyncMinutes * 60_000;
     const requestsBefore = this.client.requestCount;
-
-    const snapshot = full ? await this.fullSync(previous, now) : await this.lightSync(previous, now);
-    await this.enrich(snapshot.alerts);
-
-    if (full) this.lastFullAt = now;
-    this.pruneDetailCache(snapshot.alerts);
-    log.info('jira sync complete', {
+    const limitedBefore = this.client.rateLimitedCount;
+    const headersBefore = this.client.rateLimitHeaderCount;
+    const usage = () => ({
       kind: full ? 'full' : 'light',
-      alerts: snapshot.alerts.size,
+      auth: this.client.authMode,
+      requestsPerSecond: this.config.requestsPerSecond,
       requests: this.client.requestCount - requestsBefore,
-      skipped: snapshot.skipped,
+      rateLimited: this.client.rateLimitedCount - limitedBefore,
+      rateLimitHeaders: this.client.rateLimitHeaderCount - headersBefore,
+      ms: Date.now() - now,
     });
-    return snapshot;
+
+    try {
+      const snapshot = full ? await this.fullSync(previous, now) : await this.lightSync(previous, now);
+      await this.enrich(snapshot.alerts);
+      if (full) this.lastFullAt = now;
+      this.pruneDetailCache(snapshot.alerts);
+      log.info('jira sync complete', { ...usage(), alerts: snapshot.alerts.size, skipped: snapshot.skipped });
+      return snapshot;
+    } catch (error) {
+      log.warn('jira sync request totals', usage());
+      throw error;
+    }
   }
 
   async loadDetail(id: string): Promise<AlertDetail | null> {

@@ -80,6 +80,7 @@ const EnvSchema = z.object({
   JIRA_CLOSED_LOOKBACK_HOURS: int(72, 0, 24 * 90),
   JIRA_CACHE_TTL_SECONDS: int(30, 5, 3600),
   JIRA_FULL_SYNC_MINUTES: int(15, 1, 24 * 60),
+  JIRA_REQUESTS_PER_SECOND: int(4, 1, 20),
   JIRA_REQUEST_TIMEOUT_MS: int(15_000, 1000, 120_000),
   JIRA_ENRICH_DETAILS: text.pipe(z.enum(['auto', 'always', 'never']).optional()),
   JIRA_ENRICH_MAX_PER_SYNC: int(50, 0, 1000),
@@ -115,6 +116,7 @@ export interface JiraConfig {
   maxClosedAlerts: number;
   closedLookbackHours: number;
   fullSyncMinutes: number;
+  requestsPerSecond: number;
   requestTimeoutMs: number;
   enrichDetails: 'auto' | 'always' | 'never';
   enrichMaxPerSync: number;
@@ -220,6 +222,7 @@ function jiraConfig(e: Env, site: { siteUrl: string; siteHost: string }, oauth: 
     maxClosedAlerts: e.JIRA_MAX_CLOSED_ALERTS,
     closedLookbackHours: e.JIRA_CLOSED_LOOKBACK_HOURS,
     fullSyncMinutes: e.JIRA_FULL_SYNC_MINUTES,
+    requestsPerSecond: e.JIRA_REQUESTS_PER_SECOND,
     requestTimeoutMs: e.JIRA_REQUEST_TIMEOUT_MS,
     enrichDetails: e.JIRA_ENRICH_DETAILS ?? 'auto',
     enrichMaxPerSync: e.JIRA_ENRICH_MAX_PER_SYNC,

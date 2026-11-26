@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JiraConfig } from '../server/config';
 import { JiraApiError, JiraClient } from '../server/jira/client';
+import { log } from '../server/logger';
 
 const config = {
   siteUrl: 'https://example.atlassian.net',
@@ -9,6 +10,7 @@ const config = {
   email: 'ops@example.com',
   apiToken: 'ATATT-example-not-a-real-token',
   requestTimeoutMs: 5000,
+  requestsPerSecond: 0,
 } as JiraConfig;
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -103,6 +105,84 @@ describe('JiraClient retries', () => {
     expect(next).toMatchObject({ kind: 'rate_limit', status: 429 });
     expect((next as JiraApiError).retryAfterMs).toBeGreaterThan(20_000);
     expect(api.sent).toEqual(['GET /v1/alerts']);
+  });
+});
+
+describe('JiraClient request pacing', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('spaces concurrent sends at the configured rate without an initial burst', async () => {
+    vi.useFakeTimers({ now: 0 });
+    const sent: number[] = [];
+    const client = new JiraClient({ ...config, requestsPerSecond: 4 }, 4, async () => {
+      sent.push(Date.now());
+      return json({ values: [] });
+    });
+    const completed = Promise.all(Array.from({ length: 9 }, () => client.listAlerts({ offset: 0, size: 1 })));
+    await vi.runAllTimersAsync();
+    await completed;
+    expect(sent).toEqual([0, 250, 500, 750, 1000, 1250, 1500, 1750, 2000]);
+  });
+
+  it('rechecks a newer Retry-After while waiting and paces retries too', async () => {
+    vi.useFakeTimers({ now: 0 });
+    const sent: number[] = [];
+    const client = new JiraClient({ ...config, requestsPerSecond: 4 }, 4, async () => {
+      sent.push(Date.now());
+      if (sent.length === 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return tooMany('1');
+      }
+      return json({ values: [] });
+    });
+    const completed = Promise.all(Array.from({ length: 3 }, () => client.listAlerts({ offset: 0, size: 1 })));
+    await vi.runAllTimersAsync();
+    await completed;
+    expect(sent).toEqual([0, 1100, 1350, 1600]);
+    expect(client.rateLimitedCount).toBe(1);
+  });
+
+  it('slows down for enforced quota warnings and safely logs only rate-limit headers', async () => {
+    vi.useFakeTimers({ now: 0 });
+    const sent: number[] = [];
+    const debug = vi.spyOn(log, 'debug').mockImplementation(() => {});
+    try {
+      const client = new JiraClient({ ...config, requestsPerSecond: 4 }, 4, async () => {
+        sent.push(Date.now());
+        const headers = sent.length !== 1 ? undefined : {
+          'ratelimit-policy': '"tenant-app-quota";q=100;w=2',
+          'ratelimit': '"tenant-app-quota";r=10;t=2',
+          'set-cookie': 'session=private',
+        };
+        return Response.json({ values: [] }, { headers });
+      });
+      const completed = Promise.all(Array.from({ length: 3 }, () => client.listAlerts({ offset: 0, size: 1 })));
+      await vi.runAllTimersAsync();
+      await completed;
+      expect(sent).toEqual([0, 500, 1000]);
+      expect(client.rateLimitHeaderCount).toBe(1);
+      expect(debug.mock.calls[0]?.[1]).toMatchObject({ ratelimit: '"tenant-app-quota";r=10;t=2' });
+      expect(debug.mock.calls[0]?.[1]).not.toHaveProperty('set-cookie');
+    } finally {
+      debug.mockRestore();
+    }
+  });
+
+  it('honors an exhausted window but does not enforce beta quota hints', async () => {
+    vi.useFakeTimers({ now: 0 });
+    const sent: number[] = [];
+    const client = new JiraClient({ ...config, requestsPerSecond: 4 }, 4, async () => {
+      sent.push(Date.now());
+      const headers: HeadersInit | undefined = sent.length === 1 ? { 'beta-ratelimit': '"tenant-app-quota";r=0;t=50' }
+        : sent.length === 2 ? { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': new Date(5000).toISOString() } : undefined;
+      return Response.json({ values: [] }, { headers });
+    });
+    const completed = Promise.all(Array.from({ length: 3 }, () => client.listAlerts({ offset: 0, size: 1 })));
+    await vi.runAllTimersAsync();
+    await completed;
+    expect(sent).toEqual([0, 250, 5000]);
+    expect(client.rateLimitedCount).toBe(0);
+    expect(client.rateLimitHeaderCount).toBe(2);
   });
 });
 

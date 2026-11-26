@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { ActionResult, AlertAction, AlertAttachment, AlertLogEntry, AlertNote, DirectoryEntry, DirectoryUser, Page } from '../../shared/actions';
 import type { JiraConfig } from '../config';
 import { log } from '../logger';
+import { rateLimitHints } from './rateLimit';
 import {
   AcceptedResponseSchema,
   AttachmentSchema,
@@ -180,14 +181,6 @@ function syncError(status: number, retryAfterMs: number | null): JiraApiError {
   }
 }
 
-function parseRetryAfter(header: string | null): number | null {
-  if (!header) return null;
-  const seconds = Number(header);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-  const date = Date.parse(header);
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
-}
-
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const MAX_ATTEMPTS = 3;
@@ -204,13 +197,12 @@ function isRetryable(error: unknown, isWrite: boolean): error is JiraApiError {
 }
 
 /** The error for a response that is not OK. Jira's reason is read only from a refused write. */
-async function rejection(response: Response, purpose: Purpose, safePath: string): Promise<JiraApiError> {
+async function rejection(response: Response, purpose: Purpose, safePath: string, retryAfterMs: number | null, diagnostic: Record<string, string>): Promise<JiraApiError> {
   const wantsReason = purpose === 'write' && response.status >= 400 && response.status < 500 && response.status !== 401 && response.status !== 429;
   const detail = wantsReason ? await refusalText(response) : null;
   if (!wantsReason) await response.body?.cancel().catch(() => undefined);
-  const retryAfter = response.headers.get('retry-after');
-  log.warn('jira request rejected', { path: safePath, status: response.status, ...(retryAfter ? { retryAfter } : {}) });
-  return errorForStatus(response.status, parseRetryAfter(response.headers.get('retry-after')), purpose, detail);
+  log.warn('jira request rejected', { path: safePath, status: response.status, ...diagnostic });
+  return errorForStatus(response.status, retryAfterMs, purpose, detail);
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -333,8 +325,14 @@ export class JiraClient {
   private readonly backgroundWaiting: Array<() => void> = [];
   /** Total HTTP requests sent to Atlassian since start, for diagnostics. */
   requestCount = 0;
-  /** No request is sent before this time (set by a 429). */
+  /** Responses actually received with HTTP 429, including recovered retries. */
+  rateLimitedCount = 0;
+  /** Responses that expose rate-limit diagnostics. */
+  rateLimitHeaderCount = 0;
   private pausedUntil = 0;
+  private slowUntil = 0;
+  private lastSentAt = -Infinity;
+  private readonly intervalMs: number;
 
   constructor(
     private readonly config: JiraConfig,
@@ -346,7 +344,10 @@ export class JiraClient {
     if (bearer && !config.cloudId) throw new Error('OAuth requires an authorized site.');
     const credentials = `${config.email}:${config.apiToken}`;
     this.authorization = `Basic ${Buffer.from(credentials).toString('base64')}`;
+    this.intervalMs = config.requestsPerSecond > 0 ? Math.ceil(1000 / config.requestsPerSecond) : 0;
   }
+
+  get authMode() { return this.bearer ? 'oauth' : 'api-token'; }
 
   private get platformRoot(): string {
     return this.bearer ? `https://api.atlassian.com/ex/jira/${encodeURIComponent(this.config.cloudId!)}` : this.config.siteUrl;
@@ -726,22 +727,17 @@ export class JiraClient {
    */
   private async request<S extends z.ZodType>(url: string, schema: S, options: RequestOptions = {}): Promise<z.infer<S>> {
     const isWrite = (options.method ?? 'GET') !== 'GET';
-    await this.acquire(options.purpose === 'background');
-    try {
-      for (let attempt = 1; ; attempt += 1) {
-        // After a 429, every request waits, not only the one that was refused.
-        const pause = this.pendingPause();
-        if (pause > 0) await sleep(pause);
-        try {
-          return await this.attempt(url, schema, options);
-        } catch (error) {
-          this.pauseAfterRateLimit(error, attempt);
-          const delay = this.retryDelay(error, attempt, isWrite);
-          if (delay > 0) await sleep(delay);
-        }
+    for (let attempt = 1; ; attempt += 1) {
+      await this.acquire(options.purpose === 'background');
+      let delay: number;
+      try {
+        return await this.attempt(url, schema, options, attempt);
+      } catch (error) {
+        delay = this.retryDelay(error, attempt, isWrite);
+      } finally {
+        this.release();
       }
-    } finally {
-      this.release();
+      if (delay > 0) await sleep(delay);
     }
   }
 
@@ -752,12 +748,32 @@ export class JiraClient {
     return pause;
   }
 
-  /** A 429 pauses all requests, for Retry-After or one more second per attempt. */
-  private pauseAfterRateLimit(error: unknown, attempt: number): void {
-    if (error instanceof JiraApiError && error.kind === 'rate_limit') {
-      const wait = error.retryAfterMs ?? 1000 * attempt;
-      this.pausedUntil = Math.max(this.pausedUntil, Date.now() + wait);
+  /** Recheck shared cooldown and spacing after waking: multiple waiters must not burst together. */
+  private async waitToSend(): Promise<void> {
+    for (;;) {
+      const now = Date.now();
+      const spacing = this.intervalMs * (now < this.slowUntil ? 2 : 1);
+      const wait = Math.max(this.pendingPause(), this.lastSentAt + spacing - now);
+      if (wait <= 0) {
+        this.lastSentAt = now;
+        return;
+      }
+      await sleep(wait);
     }
+  }
+
+  private observeRateLimit(status: number, hints: ReturnType<typeof rateLimitHints>, attempt: number, now: number): number | null {
+    if (Object.keys(hints.diagnostic).length) this.rateLimitHeaderCount++;
+    this.slowUntil = Math.max(this.slowUntil, now + hints.slowdownMs);
+    let delay = hints.exhaustedMs;
+    if (status === 429) {
+      this.rateLimitedCount++;
+      delay = Math.max(delay, hints.resetMs);
+      const fallback = delay > 0 ? 0 : 1000 * 2 ** (attempt - 1) + randomInt(250);
+      delay = Math.max(delay, hints.retryAfterMs ?? fallback);
+    }
+    this.pausedUntil = Math.max(this.pausedUntil, now + delay);
+    return status === 429 ? delay : hints.retryAfterMs ?? null;
   }
 
   /**
@@ -774,14 +790,18 @@ export class JiraClient {
     return 500 * 2 ** (attempt - 1) + randomInt(250);
   }
 
-  private async attempt<S extends z.ZodType>(url: string, schema: S, options: RequestOptions): Promise<z.infer<S>> {
+  private async attempt<S extends z.ZodType>(url: string, schema: S, options: RequestOptions, attempt: number): Promise<z.infer<S>> {
     const { method = 'GET', body, authenticated = true, purpose = 'sync' } = options;
+    this.pendingPause(); // Fail fast on long cooldowns, without refreshing OAuth.
+    const authorization = authenticated && this.bearer ? `Bearer ${await this.bearer.token()}` : this.authorization;
+    await this.waitToSend();
     const started = Date.now();
-    // Only the method and path are logged: no query string, no headers, no body.
-    const safePath = `${method} ${new URL(url).pathname.replace(/^\/jsm\/ops\/api\/[^/]+\//, '/jsm/ops/api/{cloudId}/')}`;
+    // No query string, credentials or body; only selected rate-limit headers.
+    const safePath = `${method} ${new URL(url).pathname
+      .replace(/^\/jsm\/ops\/api\/[^/]+\//, '/jsm/ops/api/{cloudId}/')
+      .replace(/^\/ex\/jira\/[^/]+\//, '/ex/jira/{cloudId}/')}`;
     let response: Response;
     this.requestCount += 1;
-    const authorization = this.bearer ? `Bearer ${await this.bearer.token()}` : this.authorization;
     try {
       response = await this.fetchImpl(url, requestInit(method, body, authenticated, authorization, this.config.requestTimeoutMs));
     } catch (error) {
@@ -790,13 +810,16 @@ export class JiraClient {
       throw new JiraApiError('network', null, timedOut ? 'Jira did not answer in time.' : 'Could not reach Jira (network error).');
     }
 
-    log.debug('jira request', { path: safePath, status: response.status, ms: Date.now() - started });
+    const now = Date.now();
+    const hints = rateLimitHints(response.headers, now);
+    const retryAfterMs = this.observeRateLimit(response.status, hints, attempt, now);
+    log.debug('jira request', { path: safePath, status: response.status, ms: now - started, ...hints.diagnostic });
     if (response.status === 401 && this.bearer) {
       this.bearer.invalidate();
       await response.body?.cancel();
       throw new JiraApiError('auth', 401, 'Your Jira authorization expired. Sign in again.');
     }
-    if (!response.ok) throw await rejection(response, purpose, safePath);
+    if (!response.ok) throw await rejection(response, purpose, safePath, retryAfterMs, hints.diagnostic);
     return parseResponse(await readJson(response), schema, response.status, safePath);
   }
 

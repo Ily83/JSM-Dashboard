@@ -12,6 +12,7 @@
     "start": "tsx server/index.ts --production",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:load:jira": "vitest run --silent=false tests/load/jira-rate-limit.test.ts",
     "jira:test-alerts": "tsx scripts/jira-test-alerts.ts",
     "jira:validate-history": "tsx scripts/jira-validate-history.ts",
     "jira:simulate": "tsx scripts/jira-simulate.ts",

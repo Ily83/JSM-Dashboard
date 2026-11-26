@@ -73,6 +73,7 @@ const jiraConfig = {
   email: 'ops@example.com',
   apiToken: 'ATATT-example-not-a-real-token',
   requestTimeoutMs: 5000,
+  requestsPerSecond: 0, // Fake Jira; pacing is exercised separately.
 } as JiraConfig;
 
 interface Call {

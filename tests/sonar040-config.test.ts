@@ -30,10 +30,16 @@ describe('loadConfig branches', () => {
       openQuery: 'status: open',
       closedQuery: 'NOT status: open',
       alertUrlTemplate: '{siteUrl}/jira/ops/alerts/{id}',
+      requestsPerSecond: 4,
       enrichDetails: 'auto',
       writeActions: [],
     });
     expect(config.warnings).toEqual([]);
+  });
+
+  it('accepts an explicit Jira rate budget but rejects attempts to disable pacing', () => {
+    expect(loadConfig({ ...basic, JIRA_REQUESTS_PER_SECOND: '2' }).jira?.requestsPerSecond).toBe(2);
+    expect(() => loadConfig({ ...basic, JIRA_REQUESTS_PER_SECOND: '0' })).toThrow(/JIRA_REQUESTS_PER_SECOND/);
   });
 
   it('builds OAuth settings without basic credentials, on a loopback callback', () => {
